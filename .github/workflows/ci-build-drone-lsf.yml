@@ -1,0 +1,53 @@
+name: Build Drone LSF binary
+
+on:
+  push:
+    branches: [Drone_LSF]
+  pull_request:
+    branches: [Drone_LSF]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Linux amd64 binary
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      GOOS: linux
+      GOARCH: amd64
+      # Required by the SQLite driver.
+      CGO_ENABLED: '1'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build server
+        run: |
+          mkdir -p dist
+          go build -mod=readonly -trimpath -o dist/drone-server ./cmd/drone-server
+          go version -m dist/drone-server
+          file dist/drone-server
+
+      - name: Package binary
+        working-directory: dist
+        run: |
+          tar -czf drone-server-linux-amd64.tar.gz drone-server
+          sha256sum drone-server-linux-amd64.tar.gz > drone-server-linux-amd64.tar.gz.sha256
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v6
+        with:
+          name: drone-server-linux-amd64-${{ github.sha }}
+          path: |
+            dist/drone-server-linux-amd64.tar.gz
+            dist/drone-server-linux-amd64.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 14
