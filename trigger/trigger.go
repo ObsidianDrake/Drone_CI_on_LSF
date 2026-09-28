@@ -26,6 +26,7 @@ import (
 	"github.com/drone/drone-yaml/yaml/signer"
 
 	"github.com/drone/drone/core"
+	"github.com/drone/drone/operator/runner/lsf"
 	"github.com/drone/drone/trigger/dag"
 
 	"github.com/sirupsen/logrus"
@@ -404,7 +405,7 @@ func (t *triggerer) Trigger(ctx context.Context, repo *core.Repository, base *co
 			Updated:   time.Now().Unix(),
 		}
 		if stage.Kind == "pipeline" && stage.Type == "" {
-			stage.Type = "docker"
+			stage.Type = lsf.PipelineType(match)
 		}
 		if stage.OS == "" {
 			stage.OS = "linux"

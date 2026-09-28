@@ -32,6 +32,20 @@ func Test_systemEnviron(t *testing.T) {
 	}
 }
 
+func TestBuildLinkBasePath(t *testing.T) {
+	for _, base := range []string{"", "http://192.168.1.102:8083/drone"} {
+		system := &core.System{Proto: "http", Host: "192.168.1.102:8083", Link: base}
+		want := "http://192.168.1.102:8083/team/repo/42"
+		if base != "" {
+			want = base + "/team/repo/42"
+		}
+		got := linkEnviron(&core.Repository{Slug: "team/repo"}, &core.Build{Number: 42}, system)["DRONE_BUILD_LINK"]
+		if got != want {
+			t.Fatalf("build URL: %s, want %s", got, want)
+		}
+	}
+}
+
 func Test_runnerEnviron(t *testing.T) {
 	runner := &Runner{
 		Machine:  "ip-12-34-56-78.us-west-2.compute.internal",

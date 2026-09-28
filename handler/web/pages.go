@@ -26,6 +26,10 @@ import (
 )
 
 func HandleIndex(host string, session core.Session, license core.LicenseService) http.HandlerFunc {
+	return handleIndex(host, session, license, dist.MustLookup("/index.html"))
+}
+
+func handleIndex(host string, session core.Session, license core.LicenseService, index []byte) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		user, _ := session.Get(r)
 		if user == nil && r.URL.Path == "/" {
@@ -33,7 +37,7 @@ func HandleIndex(host string, session core.Session, license core.LicenseService)
 			return
 		}
 
-		out := dist.MustLookup("/index.html")
+		out := index
 		ctx := r.Context()
 
 		if ok, _ := license.Exceeded(ctx); ok {

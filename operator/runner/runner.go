@@ -34,6 +34,7 @@ import (
 	"github.com/drone/drone-yaml/yaml/linter"
 	"github.com/drone/drone/core"
 	"github.com/drone/drone/operator/manager"
+	"github.com/drone/drone/operator/runner/lsf"
 	"github.com/drone/drone/plugin/registry"
 	"github.com/drone/drone/plugin/secret"
 	"github.com/drone/drone/store/shared/db"
@@ -92,6 +93,9 @@ func (r *Runner) handleError(ctx context.Context, stage *core.Stage, err error) 
 		}
 		if step.Status == core.StatusRunning {
 			step.Status = core.StatusPassing
+			if r.Type == "lsf" {
+				step.Status = core.StatusError
+			}
 			step.Stopped = time.Now().Unix()
 		}
 	}
@@ -235,7 +239,14 @@ func (r *Runner) Run(ctx context.Context, id int64) error {
 
 	logger = logger.WithField("pipeline", pipeline.Name)
 
-	err = linter.Lint(pipeline, m.Repo.Trusted)
+	if r.Type == "lsf" {
+		err = lsf.ApplyEnvironment(pipeline, y)
+		if err == nil {
+			err = lsf.Lint(pipeline, m.Repo.Trusted)
+		}
+	} else {
+		err = linter.Lint(pipeline, m.Repo.Trusted)
+	}
 	if err != nil {
 		logger = logger.WithError(err)
 		logger.Warnln("runner: yaml lint errors")
@@ -346,7 +357,17 @@ func (r *Runner) Run(ctx context.Context, id int64) error {
 			convertVolumes(r.Volumes),
 		),
 	)
-	ir := comp.Compile(pipeline)
+	var ir *engine.Spec
+	if r.Type == "lsf" {
+		ir = lsf.Compile(comp, pipeline)
+		if ir.Metadata.Labels == nil {
+			ir.Metadata.Labels = make(map[string]string)
+		}
+		ir.Metadata.Labels["lsf.drone.io/repo-id"] = fmt.Sprint(m.Repo.ID)
+		ir.Metadata.Labels[lsf.JobInfoDisabledLabel] = fmt.Sprint(m.Repo.LSFJobInfoDisabled)
+	} else {
+		ir = comp.Compile(pipeline)
+	}
 
 	steps := map[string]*core.Step{}
 	i := 0
@@ -366,8 +387,14 @@ func (r *Runner) Run(ctx context.Context, id int64) error {
 		m.Stage.Steps = append(m.Stage.Steps, dst)
 	}
 
+	timeout, cancel := context.WithTimeout(ctx, time.Duration(m.Repo.Timeout)*time.Minute)
+	defer cancel()
+
 	hooks := &runtime.Hook{
 		BeforeEach: func(s *runtime.State) error {
+			if r.Type == "lsf" && timeout.Err() != nil {
+				return runtime.ErrSkip
+			}
 			r.Lock()
 			s.Step.Envs["DRONE_MACHINE"] = r.Machine
 			s.Step.Envs["CI_BUILD_STATUS"] = "success"
@@ -465,6 +492,12 @@ func (r *Runner) Run(ctx context.Context, id int64) error {
 		},
 
 		GotLogs: func(s *runtime.State, lines []*runtime.Line) error {
+			logCtx := ctx
+			if r.Type == "lsf" {
+				var logCancel context.CancelFunc
+				logCtx, logCancel = context.WithTimeout(context.Background(), 30*time.Second)
+				defer logCancel()
+			}
 			r.Lock()
 			step, ok := steps[s.Step.Metadata.Name]
 			r.Unlock()
@@ -475,12 +508,20 @@ func (r *Runner) Run(ctx context.Context, id int64) error {
 			raw, _ := json.Marshal(
 				convertLines(lines),
 			)
-			return r.Manager.UploadBytes(ctx, step.ID, raw)
+			return r.Manager.UploadBytes(logCtx, step.ID, raw)
 		},
 	}
 
+	runtimeEngine := r.Engine
+	runtimeCtx := timeout
+	if r.Type == "lsf" {
+		runtimeEngine = lsf.WithContext(r.Engine, timeout)
+		// The legacy serial runtime otherwise returns before its step goroutine
+		// finishes, racing log uploads and final stage updates on cancellation.
+		runtimeCtx = context.Background()
+	}
 	runner := runtime.New(
-		runtime.WithEngine(r.Engine),
+		runtime.WithEngine(runtimeEngine),
 		runtime.WithConfig(ir),
 		runtime.WithHooks(hooks),
 	)
@@ -495,12 +536,27 @@ func (r *Runner) Run(ctx context.Context, id int64) error {
 		return r.handleError(ctx, m.Stage, err)
 	}
 
-	timeout, cancel := context.WithTimeout(ctx, time.Duration(m.Repo.Timeout)*time.Minute)
-	defer cancel()
-
 	logger.Infoln("runner: start execution")
 
-	err = runner.Run(timeout)
+	err = runner.Run(runtimeCtx)
+	if r.Type == "lsf" && timeout.Err() != nil {
+		// Runtime step calls use background contexts; the LSF engine still
+		// cancels jobs through the context saved in Setup.
+		m.Stage.Status = core.StatusKilled
+		m.Stage.Stopped = time.Now().Unix()
+		for _, step := range m.Stage.Steps {
+			if step.Status == core.StatusPending {
+				step.Status = core.StatusSkipped
+			}
+			if step.Status == core.StatusRunning {
+				step.Status = core.StatusKilled
+				step.Stopped = m.Stage.Stopped
+			}
+		}
+		finishCtx, finishCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer finishCancel()
+		return r.Manager.AfterAll(finishCtx, m.Stage)
+	}
 	if err != nil && err != runtime.ErrInterrupt {
 		logger = logger.WithError(err)
 		logger.Infoln("runner: execution failed")
@@ -561,9 +617,13 @@ func (r *Runner) poll(ctx context.Context) error {
 	)
 
 	logger.Debugln("runner: polling queue")
+	pipelineType := r.Type
+	if pipelineType == "" {
+		pipelineType = "docker"
+	}
 	p, err := r.Manager.Request(ctx, &manager.Request{
 		Kind:    "pipeline",
-		Type:    "docker",
+		Type:    pipelineType,
 		OS:      r.OS,
 		Arch:    r.Arch,
 		Kernel:  r.Kernel,
@@ -579,7 +639,11 @@ func (r *Runner) poll(ctx context.Context) error {
 		return nil
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	buildCtx := context.Background()
+	if r.Type == "lsf" {
+		buildCtx = ctx
+	}
+	ctx, cancel := context.WithCancel(buildCtx)
 	defer cancel()
 
 	_, err = r.Manager.Accept(ctx, p.ID, r.Machine)

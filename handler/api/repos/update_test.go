@@ -14,6 +14,7 @@ import (
 
 	"github.com/drone/drone/core"
 	"github.com/drone/drone/handler/api/errors"
+	"github.com/drone/drone/handler/api/request"
 	"github.com/drone/drone/mock"
 
 	"github.com/go-chi/chi"
@@ -39,8 +40,8 @@ func TestUpdate(t *testing.T) {
 		Link:       "https://github.com/octocat/hello-world",
 	}
 
-	repoInput := &core.Repository{
-		Visibility: core.VisibilityPublic,
+	repoInput := map[string]interface{}{
+		"visibility": core.VisibilityPublic,
 	}
 
 	checkUpdate := func(_ context.Context, updated *core.Repository) error {
@@ -189,8 +190,8 @@ func TestUpdate_UpdateFailed(t *testing.T) {
 		Link:       "https://github.com/octocat/hello-world",
 	}
 
-	repoInput := &core.Repository{
-		Visibility: core.VisibilityPublic,
+	repoInput := map[string]interface{}{
+		"visibility": core.VisibilityPublic,
 	}
 
 	repos := mock.NewMockRepositoryStore(controller)
@@ -226,23 +227,23 @@ func TestUpdateAutoCancelRunning(t *testing.T) {
 	defer controller.Finish()
 
 	repo := &core.Repository{
-		ID:         1,
-		UserID:     1,
-		Namespace:  "octocat",
-		Name:       "hello-world",
-		Slug:       "octocat/hello-world",
-		Branch:     "master",
-		Private:    false,
-		Visibility: core.VisibilityPrivate,
-		HTTPURL:    "https://github.com/octocat/hello-world.git",
-		SSHURL:     "git@github.com:octocat/hello-world.git",
-		Link:       "https://github.com/octocat/hello-world",
+		ID:            1,
+		UserID:        1,
+		Namespace:     "octocat",
+		Name:          "hello-world",
+		Slug:          "octocat/hello-world",
+		Branch:        "master",
+		Private:       false,
+		Visibility:    core.VisibilityPrivate,
+		HTTPURL:       "https://github.com/octocat/hello-world.git",
+		SSHURL:        "git@github.com:octocat/hello-world.git",
+		Link:          "https://github.com/octocat/hello-world",
 		CancelRunning: false,
 	}
 
-	repoInput := &core.Repository{
-		CancelRunning: true,
-		Visibility: core.VisibilityPrivate,
+	repoInput := map[string]interface{}{
+		"auto_cancel_running": true,
+		"visibility":          core.VisibilityPrivate,
 	}
 
 	shouldBeValue := true
@@ -275,21 +276,113 @@ func TestUpdateAutoCancelRunning(t *testing.T) {
 	}
 
 	got, want := new(core.Repository), &core.Repository{
-		ID:         1,
-		UserID:     1,
-		Namespace:  "octocat",
-		Name:       "hello-world",
-		Slug:       "octocat/hello-world",
-		Branch:     "master",
-		Private:    false,
-		Visibility: core.VisibilityPrivate,
-		HTTPURL:    "https://github.com/octocat/hello-world.git",
-		SSHURL:     "git@github.com:octocat/hello-world.git",
-		Link:       "https://github.com/octocat/hello-world",
+		ID:            1,
+		UserID:        1,
+		Namespace:     "octocat",
+		Name:          "hello-world",
+		Slug:          "octocat/hello-world",
+		Branch:        "master",
+		Private:       false,
+		Visibility:    core.VisibilityPrivate,
+		HTTPURL:       "https://github.com/octocat/hello-world.git",
+		SSHURL:        "git@github.com:octocat/hello-world.git",
+		Link:          "https://github.com/octocat/hello-world",
 		CancelRunning: true,
 	}
 	json.NewDecoder(w.Body).Decode(got)
 	if diff := cmp.Diff(got, want); len(diff) > 0 {
 		t.Errorf("Diff: %s", diff)
+	}
+}
+
+func TestUpdateLSFJobInfoAdminOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name                string
+		admin, before, next bool
+		code                int
+	}{
+		{"admin disables", true, false, true, 200}, {"admin enables", true, true, false, 200},
+		{"nonadmin disables", false, false, true, 403}, {"nonadmin enables", false, true, false, 403},
+		{"nonadmin unchanged", false, true, true, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			repo := &core.Repository{LSFJobInfoDisabled: tc.before}
+			repos := mock.NewMockRepositoryStore(ctrl)
+			repos.EXPECT().FindName(gomock.Any(), "test", "repo").Return(repo, nil)
+			if tc.code == 200 {
+				repos.EXPECT().Update(gomock.Any(), repo).Do(func(_ context.Context, r *core.Repository) {
+					if r.LSFJobInfoDisabled != tc.next {
+						t.Fatal("setting not updated")
+					}
+				}).Return(nil)
+			}
+			c := new(chi.Context)
+			c.URLParams.Add("owner", "test")
+			c.URLParams.Add("name", "repo")
+			body, _ := json.Marshal(map[string]bool{"lsf_job_info_disabled": tc.next})
+			r := httptest.NewRequest("PATCH", "/", bytes.NewReader(body))
+			r = r.WithContext(request.WithUser(context.WithValue(r.Context(), chi.RouteCtxKey, c), &core.User{Admin: tc.admin}))
+			w := httptest.NewRecorder()
+			HandleUpdate(repos)(w, r)
+			if w.Code != tc.code {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+			}
+			if tc.code == 403 && repo.LSFJobInfoDisabled != tc.before {
+				t.Fatal("unauthorized mutation")
+			}
+		})
+	}
+}
+
+func TestTimeoutHoursValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		admin      bool
+		code       int
+		minutes    int64
+	}{
+		{"one hour", `{"timeout_hours":1}`, true, 200, 60},
+		{"multiple hours", `{"timeout_hours":12}`, true, 200, 720},
+		{"empty", `{"timeout_hours":""}`, true, 400, 0},
+		{"null", `{"timeout_hours":null}`, true, 400, 0},
+		{"zero", `{"timeout_hours":0}`, true, 400, 0},
+		{"negative", `{"timeout_hours":-1}`, true, 400, 0},
+		{"fraction", `{"timeout_hours":1.5}`, true, 400, 0},
+		{"string", `{"timeout_hours":"2"}`, true, 400, 0},
+		{"overflow", `{"timeout_hours":2562048}`, true, 400, 0},
+		{"conflict", `{"timeout_hours":2,"timeout":60}`, true, 400, 0},
+		{"legacy minutes", `{"timeout":30}`, true, 200, 30},
+		{"nonadmin change", `{"timeout_hours":2}`, false, 403, 0},
+		{"nonadmin unchanged", `{"timeout_hours":1}`, false, 200, 60},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			repo := &core.Repository{Timeout: 60}
+			repos := mock.NewMockRepositoryStore(ctrl)
+			repos.EXPECT().FindName(gomock.Any(), "test", "repo").Return(repo, nil)
+			if tc.code == 200 {
+				repos.EXPECT().Update(gomock.Any(), repo).Do(func(_ context.Context, r *core.Repository) {
+					if r.Timeout != tc.minutes {
+						t.Fatalf("timeout=%d want %d", r.Timeout, tc.minutes)
+					}
+				}).Return(nil)
+			}
+			c := new(chi.Context)
+			c.URLParams.Add("owner", "test")
+			c.URLParams.Add("name", "repo")
+			r := httptest.NewRequest("PATCH", "/", strings.NewReader(tc.body))
+			r = r.WithContext(request.WithUser(context.WithValue(r.Context(), chi.RouteCtxKey, c), &core.User{Admin: tc.admin}))
+			w := httptest.NewRecorder()
+			HandleUpdate(repos)(w, r)
+			if w.Code != tc.code {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+			}
+			if tc.code != 200 && repo.Timeout != 60 {
+				t.Fatal("invalid input changed timeout")
+			}
+		})
 	}
 }

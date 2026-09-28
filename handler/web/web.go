@@ -16,8 +16,7 @@ package web
 
 import (
 	"net/http"
-
-	"github.com/drone/drone-ui/dist"
+	"net/url"
 
 	"github.com/drone/drone/core"
 	"github.com/drone/drone/handler/web/link"
@@ -89,10 +88,15 @@ type Server struct {
 	Webhook   core.WebhookSender
 	Options   secure.Options
 	Host      string
+	BasePath  string
 }
 
 // Handler returns an http.Handler
 func (s Server) Handler() http.Handler {
+	assets, err := newUIAssets(s.BasePath)
+	if err != nil {
+		panic(err)
+	}
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.NoCache)
@@ -126,16 +130,24 @@ func (s Server) Handler() http.Handler {
 			),
 		),
 	)
-	r.Get("/logout", HandleLogout())
-	r.Post("/logout", HandleLogout())
+	r.Get("/{namespace}/{name}/deployments", func(w http.ResponseWriter, r *http.Request) {
+		target := "/" + url.PathEscape(chi.URLParam(r, "namespace")) + "/" + url.PathEscape(chi.URLParam(r, "name"))
+		http.Redirect(w, r, target, http.StatusSeeOther)
+	})
+	r.Get("/logout", handleLogout(assets.index))
+	r.Post("/logout", handleLogout(assets.index))
+	// Profile onboarding is no longer required after SCM authentication.
+	r.Get("/register", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+	})
 
-	h := http.FileServer(dist.New())
+	h := http.FileServer(assets)
 	h = setupCache(h)
 	r.Handle("/favicon.png", h)
 	r.Handle("/manifest.json", h)
 	r.Handle("/asset-manifest.json", h)
 	r.Handle("/static/*filepath", h)
-	r.NotFound(HandleIndex(s.Host, s.Session, s.Licenses))
+	r.NotFound(handleIndex(s.Host, s.Session, s.Licenses, assets.index))
 
 	return r
 }

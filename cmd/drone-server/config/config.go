@@ -21,6 +21,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/drone/drone/handler/basepath"
+
 	"github.com/dchest/uniuri"
 	"github.com/dustin/go-humanize"
 	"github.com/kelseyhightower/envconfig"
@@ -61,6 +63,7 @@ type (
 		Jsonnet      Jsonnet
 		Starlark     Starlark
 		Logging      Logging
+		LSF          LSF
 		Prometheus   Prometheus
 		Proxy        Proxy
 		Redis        Redis
@@ -223,6 +226,7 @@ type (
 
 	// Runner provides the runner configuration.
 	Runner struct {
+		Engine     string            `envconfig:"DRONE_RUNNER_ENGINE" default:"docker"`
 		Local      bool              `envconfig:"DRONE_RUNNER_LOCAL"`
 		Image      string            `envconfig:"DRONE_RUNNER_IMAGE"    default:"drone/controller:1"`
 		Platform   string            `envconfig:"DRONE_RUNNER_PLATFORM" default:"linux/amd64"`
@@ -248,17 +252,32 @@ type (
 		}
 	}
 
+	LSF struct {
+		Bsub           string        `envconfig:"DRONE_LSF_BSUB" default:"bsub"`
+		Bjobs          string        `envconfig:"DRONE_LSF_BJOBS" default:"bjobs"`
+		Bkill          string        `envconfig:"DRONE_LSF_BKILL" default:"bkill"`
+		Workspace      string        `envconfig:"DRONE_LSF_WORKSPACE"`
+		Queue          string        `envconfig:"DRONE_LSF_QUEUE"`
+		Resources      string        `envconfig:"DRONE_LSF_RESOURCES"`
+		Shell          string        `envconfig:"DRONE_LSF_SHELL" default:"/bin/tcsh"`
+		Slots          int           `envconfig:"DRONE_LSF_SLOTS" default:"1"`
+		PollInterval   time.Duration `envconfig:"DRONE_LSF_POLL_INTERVAL" default:"1s"`
+		CommandTimeout time.Duration `envconfig:"DRONE_LSF_COMMAND_TIMEOUT" default:"30s"`
+		CleanupTimeout time.Duration `envconfig:"DRONE_LSF_CLEANUP_TIMEOUT" default:"1m"`
+	}
+
 	// Server provides the server configuration.
 	Server struct {
-		Addr  string `envconfig:"-"`
-		Host  string `envconfig:"DRONE_SERVER_HOST" default:"localhost:8080"`
-		Port  string `envconfig:"DRONE_SERVER_PORT" default:":8080"`
-		Proto string `envconfig:"DRONE_SERVER_PROTO" default:"http"`
-		Pprof bool   `envconfig:"DRONE_PPROF_ENABLED"`
-		Acme  bool   `envconfig:"DRONE_TLS_AUTOCERT"`
-		Email string `envconfig:"DRONE_TLS_EMAIL"`
-		Cert  string `envconfig:"DRONE_TLS_CERT"`
-		Key   string `envconfig:"DRONE_TLS_KEY"`
+		BasePath string `envconfig:"DRONE_SERVER_BASE_PATH"`
+		Addr     string `envconfig:"-"`
+		Host     string `envconfig:"DRONE_SERVER_HOST" default:"localhost:8080"`
+		Port     string `envconfig:"DRONE_SERVER_PORT" default:":8080"`
+		Proto    string `envconfig:"DRONE_SERVER_PROTO" default:"http"`
+		Pprof    bool   `envconfig:"DRONE_PPROF_ENABLED"`
+		Acme     bool   `envconfig:"DRONE_TLS_AUTOCERT"`
+		Email    string `envconfig:"DRONE_TLS_EMAIL"`
+		Cert     string `envconfig:"DRONE_TLS_CERT"`
+		Key      string `envconfig:"DRONE_TLS_KEY"`
 	}
 
 	// Proxy provides proxy server configuration.
@@ -454,6 +473,13 @@ type (
 func Environ() (Config, error) {
 	cfg := Config{}
 	err := envconfig.Process("", &cfg)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.Server.BasePath, err = basepath.Normalize(cfg.Server.BasePath)
+	if err != nil {
+		return cfg, err
+	}
 	defaultAddress(&cfg)
 	defaultProxy(&cfg)
 	defaultRunner(&cfg)
@@ -534,7 +560,7 @@ func defaultAddress(c *Config) {
 		c.Server.Proto = "https"
 	}
 	c.Server.Host = cleanHostname(c.Server.Host)
-	c.Server.Addr = c.Server.Proto + "://" + c.Server.Host
+	c.Server.Addr = c.Server.Proto + "://" + c.Server.Host + c.Server.BasePath
 }
 
 func defaultProxy(c *Config) {
@@ -546,7 +572,7 @@ func defaultProxy(c *Config) {
 	if c.Proxy.Proto == "" {
 		c.Proxy.Proto = c.Server.Proto
 	}
-	c.Proxy.Addr = c.Proxy.Proto + "://" + c.Proxy.Host
+	c.Proxy.Addr = c.Proxy.Proto + "://" + c.Proxy.Host + c.Server.BasePath
 }
 
 func defaultCallback(c *Config) {

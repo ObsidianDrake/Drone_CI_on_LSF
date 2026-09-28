@@ -21,6 +21,7 @@ import (
 	"github.com/drone/drone/cmd/drone-server/config"
 	"github.com/drone/drone/core"
 	"github.com/drone/drone/handler/api"
+	"github.com/drone/drone/handler/basepath"
 	"github.com/drone/drone/handler/health"
 	"github.com/drone/drone/handler/web"
 	"github.com/drone/drone/metric"
@@ -62,6 +63,8 @@ var serverSet = wire.NewSet(
 // router that is serves the provided handlers.
 func provideRouter(api api.Server, web web.Server, rpcv1 rpcHandlerV1, rpcv2 rpcHandlerV2, healthz healthzHandler, metrics *metric.Server, pprof pprofHandler, config config.Config) *chi.Mux {
 	r := chi.NewRouter()
+	r.Use(basepath.Middleware(config.Server.BasePath))
+	web.BasePath = config.Server.BasePath
 	if config.Prometheus.EnableHTTPMetrics {
 		m := chiprometheus.NewPatternMiddleware("server")
 		r.Use(m)

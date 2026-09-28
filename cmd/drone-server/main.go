@@ -23,9 +23,10 @@ import (
 	"github.com/drone/drone/cmd/drone-server/config"
 	"github.com/drone/drone/core"
 	"github.com/drone/drone/metric/sink"
+	"github.com/drone/drone/monitor"
 	"github.com/drone/drone/operator/runner"
-	"github.com/drone/drone/service/canceler/reaper"
 	"github.com/drone/drone/server"
+	"github.com/drone/drone/service/canceler/reaper"
 	"github.com/drone/drone/trigger/cron"
 	"github.com/drone/signal"
 
@@ -81,6 +82,7 @@ func main() {
 	}
 
 	g := errgroup.Group{}
+	g.Go(func() error { return app.trends.Run(ctx) })
 	g.Go(func() error {
 		logrus.WithFields(
 			logrus.Fields{
@@ -166,6 +168,7 @@ func initLogging(c config.Config) {
 
 // application is the main struct for the Drone server.
 type application struct {
+	trends *monitor.Service
 	cron   *cron.Scheduler
 	reaper *reaper.Reaper
 	sink   *sink.Datadog
@@ -181,9 +184,9 @@ func newApplication(
 	sink *sink.Datadog,
 	runner *runner.Runner,
 	server *server.Server,
-	users core.UserStore) application {
+	users core.UserStore, trends *monitor.Service) application {
 	return application{
-		users:  users,
+		trends: trends, users: users,
 		cron:   cron,
 		sink:   sink,
 		server: server,

@@ -1,0 +1,16 @@
+kind: pipeline
+name: run_QC
+environment: &env
+  BSUB_OPTION: -q pdkd3_4_gitea_8.q
+  SHELL_TYPE: csh
+clone:
+  disable: true
+steps:
+  - name: clone
+    image: git
+    environment: *env
+  - name: step1
+    image: none
+    environment: *env
+    commands:
+      - echo "hello"

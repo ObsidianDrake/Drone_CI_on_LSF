@@ -200,6 +200,27 @@ var migrations = []struct {
 		name: "create-new-table-cards",
 		stmt: createNewTableCards,
 	},
+	{name: "alter-table-repos-add-lsf-job-info-disabled", stmt: `ALTER TABLE repos ADD COLUMN repo_lsf_job_info_disabled BOOLEAN NOT NULL DEFAULT FALSE;`},
+	{name: "create-trend-frames", stmt: `CREATE TABLE trend_frames (
+ trend_time BIGINT PRIMARY KEY,
+ trend_lsf_valid INTEGER NOT NULL
+);`},
+	{name: "create-trend-samples", stmt: `CREATE TABLE trend_samples (
+ trend_time BIGINT NOT NULL,
+ trend_repo BIGINT NOT NULL,
+ build_running INTEGER NOT NULL,
+ build_pending INTEGER NOT NULL,
+ lsf_running INTEGER NOT NULL,
+ lsf_pending INTEGER NOT NULL,
+ lsf_valid INTEGER NOT NULL,
+ PRIMARY KEY (trend_time, trend_repo)
+);`},
+	{name: "create-trend-jobs", stmt: `CREATE TABLE trend_jobs (
+ job_id VARCHAR(64) PRIMARY KEY,
+ job_repo BIGINT NOT NULL,
+ job_name VARCHAR(250) NOT NULL
+);`},
+	{name: "create-trend-repo-index", stmt: `CREATE INDEX trend_repo_time ON trend_samples(trend_repo,trend_time);`},
 }
 
 // Migrate performs the database migration. If the migration fails

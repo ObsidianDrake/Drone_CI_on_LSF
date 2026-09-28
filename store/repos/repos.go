@@ -298,6 +298,7 @@ SELECT
 ,repo_timeout
 ,repo_throttle
 ,repo_trusted
+,repo_lsf_job_info_disabled
 ,repo_protected
 ,repo_no_forks
 ,repo_no_pulls
@@ -395,6 +396,7 @@ INSERT INTO repos (
 ,repo_timeout
 ,repo_throttle
 ,repo_trusted
+,repo_lsf_job_info_disabled
 ,repo_protected
 ,repo_no_forks
 ,repo_no_pulls
@@ -426,6 +428,7 @@ INSERT INTO repos (
 ,:repo_timeout
 ,:repo_throttle
 ,:repo_trusted
+,:repo_lsf_job_info_disabled
 ,:repo_protected
 ,:repo_no_forks
 ,:repo_no_pulls
@@ -474,6 +477,7 @@ UPDATE repos SET
 ,repo_active = :repo_active
 ,repo_config = :repo_config
 ,repo_trusted = :repo_trusted
+,repo_lsf_job_info_disabled = :repo_lsf_job_info_disabled
 ,repo_protected = :repo_protected
 ,repo_no_forks = :repo_no_forks
 ,repo_no_pulls = :repo_no_pulls

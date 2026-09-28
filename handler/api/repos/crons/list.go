@@ -2,6 +2,7 @@
 // Use of this source code is governed by the Drone Non-Commercial License
 // that can be found in the LICENSE file.
 
+//go:build !oss
 // +build !oss
 
 package crons
@@ -35,6 +36,9 @@ func HandleList(
 		if err != nil {
 			render.NotFound(w, err)
 			return
+		}
+		if list == nil {
+			list = []*core.Cron{}
 		}
 		render.JSON(w, list, 200)
 	}

@@ -1,0 +1,14 @@
+kind: pipeline
+name: lsf-build
+
+steps:
+- name: prepare
+  commands:
+  - 'echo "LSF job: $$LSB_JOBID"'
+  - 'set message = "hello from tcsh"'
+  - 'echo "$$message" > result.log'
+
+- name: verify
+  commands:
+  - cat result.log
+  - git rev-parse HEAD

@@ -17,6 +17,7 @@ package repos
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/drone/drone/core"
 	"github.com/drone/drone/handler/api/render"
@@ -26,20 +27,24 @@ import (
 	"github.com/go-chi/chi"
 )
 
+const maxTimeoutHours = int64((1<<63 - 1) / time.Hour)
+
 type (
 	repositoryInput struct {
-		Visibility    *string `json:"visibility"`
-		Config        *string `json:"config_path"`
-		Trusted       *bool   `json:"trusted"`
-		Protected     *bool   `json:"protected"`
-		IgnoreForks   *bool   `json:"ignore_forks"`
-		IgnorePulls   *bool   `json:"ignore_pull_requests"`
-		CancelPulls   *bool   `json:"auto_cancel_pull_requests"`
-		CancelPush    *bool   `json:"auto_cancel_pushes"`
-		CancelRunning *bool   `json:"auto_cancel_running"`
-		Timeout       *int64  `json:"timeout"`
-		Throttle      *int64  `json:"throttle"`
-		Counter       *int64  `json:"counter"`
+		TimeoutHours       json.RawMessage `json:"timeout_hours"`
+		Visibility         *string         `json:"visibility"`
+		Config             *string         `json:"config_path"`
+		Trusted            *bool           `json:"trusted"`
+		LSFJobInfoDisabled *bool           `json:"lsf_job_info_disabled"`
+		Protected          *bool           `json:"protected"`
+		IgnoreForks        *bool           `json:"ignore_forks"`
+		IgnorePulls        *bool           `json:"ignore_pull_requests"`
+		CancelPulls        *bool           `json:"auto_cancel_pull_requests"`
+		CancelPush         *bool           `json:"auto_cancel_pushes"`
+		CancelRunning      *bool           `json:"auto_cancel_running"`
+		Timeout            *int64          `json:"timeout"`
+		Throttle           *int64          `json:"throttle"`
+		Counter            *int64          `json:"counter"`
 	}
 )
 
@@ -73,6 +78,34 @@ func HandleUpdate(repos core.RepositoryStore) http.HandlerFunc {
 				WithField("repository", slug).
 				Debugln("api: cannot unmarshal json input")
 			return
+		}
+
+		if len(in.TimeoutHours) > 0 {
+			var hours int64
+			if in.Timeout != nil || json.Unmarshal(in.TimeoutHours, &hours) != nil || hours < 1 || hours > maxTimeoutHours {
+				render.BadRequestf(w, "Timeout must be an integer from 1 to %d hours; do not also send timeout", maxTimeoutHours)
+				return
+			}
+			minutes := hours * 60
+			in.Timeout = &minutes
+		}
+		if in.Timeout != nil {
+			if *in.Timeout < 1 || *in.Timeout > maxTimeoutHours*60 {
+				render.BadRequestf(w, "Timeout is outside the supported range")
+				return
+			}
+			if (user == nil || !user.Admin) && *in.Timeout != repo.Timeout {
+				http.Error(w, "Only Drone administrators can change timeout", http.StatusForbidden)
+				return
+			}
+		}
+
+		if in.LSFJobInfoDisabled != nil && *in.LSFJobInfoDisabled != repo.LSFJobInfoDisabled {
+			if user == nil || !user.Admin {
+				http.Error(w, "Only Drone administrators can change LSF job information settings", http.StatusForbidden)
+				return
+			}
+			repo.LSFJobInfoDisabled = *in.LSFJobInfoDisabled
 		}
 
 		if in.Visibility != nil {

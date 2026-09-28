@@ -67,18 +67,19 @@ func HandleLogin(
 			return
 		}
 
+		syncAdmin := false
+		if policy, ok := userz.(interface{ SyncAdmin() bool }); ok {
+			syncAdmin = policy.SyncAdmin()
+		}
 		logger := logrus.WithField("login", account.Login)
 		logger.Debugf("attempting authentication")
 
-		redirect := "/"
 		user, err := users.FindLogin(ctx, account.Login)
 		if err == sql.ErrNoRows {
-			redirect = "/register"
-
 			user = &core.User{
 				Login:     account.Login,
 				Avatar:    account.Avatar,
-				Admin:     false,
+				Admin:     syncAdmin && account.Admin,
 				Machine:   false,
 				Active:    true,
 				Syncing:   true,
@@ -141,6 +142,9 @@ func HandleLogin(
 			return
 		}
 
+		if syncAdmin {
+			user.Admin = account.Admin
+		}
 		user.Avatar = account.Avatar
 		user.Token = tok.Access
 		user.Refresh = tok.Refresh
@@ -157,6 +161,11 @@ func HandleLogin(
 
 		err = users.Update(ctx, user)
 		if err != nil {
+			if syncAdmin {
+				writeLoginErrorStr(w, r, "Cannot save synchronized administrator status")
+				logger.Error("cannot persist synchronized account")
+				return
+			}
 			// if the account update fails we should still
 			// proceed to create the user session. This is
 			// considered a non-fatal error.
@@ -170,16 +179,10 @@ func HandleLogin(
 			go synchronize(ctx, syncer, user)
 		}
 
-		// If the user account has not completed registration,
-		// redirect to the registration form.
-		if len(user.Email) == 0 && user.Created > 1619841600 {
-			redirect = "/register"
-		}
-
 		logger.Debugf("authentication successful")
 
 		session.Create(w, user)
-		http.Redirect(w, r, redirect, http.StatusSeeOther)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
 	}
 }
 

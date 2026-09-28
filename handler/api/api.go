@@ -26,6 +26,7 @@ import (
 	"github.com/drone/drone/handler/api/card"
 	"github.com/drone/drone/handler/api/ccmenu"
 	"github.com/drone/drone/handler/api/events"
+	monitorapi "github.com/drone/drone/handler/api/monitor"
 	"github.com/drone/drone/handler/api/queue"
 	"github.com/drone/drone/handler/api/repos"
 	"github.com/drone/drone/handler/api/repos/builds"
@@ -46,6 +47,7 @@ import (
 	"github.com/drone/drone/handler/api/user/remote"
 	"github.com/drone/drone/handler/api/users"
 	"github.com/drone/drone/logger"
+	"github.com/drone/drone/monitor"
 
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
@@ -63,6 +65,7 @@ var corsOpts = cors.Options{
 
 func New(
 	builds core.BuildStore,
+	trends *monitor.Service,
 	commits core.CommitService,
 	card core.CardStore,
 	cron core.CronStore,
@@ -94,6 +97,7 @@ func New(
 ) Server {
 	return Server{
 		Builds:     builds,
+		Trends:     trends,
 		Card:       card,
 		Cron:       cron,
 		Commits:    commits,
@@ -127,6 +131,7 @@ func New(
 
 // Server is a http.Handler which exposes drone functionality over HTTP.
 type Server struct {
+	Trends     *monitor.Service
 	Builds     core.BuildStore
 	Card       core.CardStore
 	Cron       core.CronStore
@@ -166,9 +171,12 @@ func (s Server) Handler() http.Handler {
 	r.Use(middleware.NoCache)
 	r.Use(logger.Middleware)
 	r.Use(auth.HandleAuthentication(s.Session))
-
 	cors := cors.New(corsOpts)
 	r.Use(cors.Handler)
+
+	if s.Trends != nil {
+		r.Get("/monitor/trends", monitorapi.Handle(s.Trends.Store, s.Repoz, s.Trends.Enabled))
+	}
 
 	r.Route("/repos", func(r chi.Router) {
 		// temporary workaround to enable private mode
@@ -204,6 +212,7 @@ func (s Server) Handler() http.Handler {
 
 			r.Route("/builds", func(r chi.Router) {
 				r.Get("/", builds.HandleList(s.Repos, s.Builds))
+				r.Post("/history/delete", builds.HandleHistory(s.Repos, s.Builds, s.Logs))
 				r.With(acl.CheckWriteAccess()).Post("/", builds.HandleCreate(s.Users, s.Repos, s.Commits, s.Triggerer))
 
 				r.Get("/branches", branches.HandleList(s.Repos, s.Builds))
@@ -229,10 +238,6 @@ func (s Server) Handler() http.Handler {
 
 				r.With(
 					acl.CheckWriteAccess(),
-				).Post("/{number}/promote", builds.HandlePromote(s.Repos, s.Builds, s.Triggerer))
-
-				r.With(
-					acl.CheckWriteAccess(),
 				).Post("/{number}/rollback", builds.HandleRollback(s.Repos, s.Builds, s.Triggerer))
 
 				r.With(
@@ -251,9 +256,6 @@ func (s Server) Handler() http.Handler {
 					acl.CheckAdminAccess(),
 				).Delete("/{number}/logs/{stage}/{step}", logs.HandleDelete(s.Repos, s.Builds, s.Stages, s.Steps, s.Logs))
 
-				r.With(
-					acl.CheckAdminAccess(),
-				).Delete("/", builds.HandlePurge(s.Repos, s.Builds))
 			})
 
 			r.Route("/secrets", func(r chi.Router) {

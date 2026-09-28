@@ -23,11 +23,15 @@ import (
 // HandleLogout creates an http.HandlerFunc that handles
 // session termination.
 func HandleLogout() http.HandlerFunc {
+	return handleLogout(dist.MustLookup("/index.html"))
+}
+
+func handleLogout(index []byte) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Set-Cookie", "_session_=deleted; Path=/; Max-Age=0")
 		w.Header().Set("Content-Type", "text/html; charset=UTF-8")
 		w.Write(
-			dist.MustLookup("/index.html"),
+			index,
 		)
 	}
 }

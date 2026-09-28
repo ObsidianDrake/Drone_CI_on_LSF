@@ -42,6 +42,7 @@ import (
 // wire set for loading the stores.
 var storeSet = wire.NewSet(
 	provideDatabase,
+	provideMonitor,
 	provideEncrypter,
 	provideBuildStore,
 	provideLogStore,

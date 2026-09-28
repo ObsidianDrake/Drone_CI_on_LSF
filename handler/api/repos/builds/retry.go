@@ -84,7 +84,6 @@ func HandleRetry(
 			AuthorAvatar: prev.AuthorAvatar,
 			Deployment:   prev.Deploy,
 			DeploymentID: prev.DeployID,
-			Debug:        r.FormValue("debug") == "true",
 			Cron:         prev.Cron,
 			Sender:       prev.Sender,
 			Params:       map[string]string{},

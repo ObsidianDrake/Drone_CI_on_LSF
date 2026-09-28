@@ -20,7 +20,6 @@ import (
 	"github.com/drone/drone/service/linker"
 	"github.com/drone/drone/service/token"
 	"github.com/drone/drone/service/transfer"
-	"github.com/drone/drone/service/user"
 	"github.com/drone/drone/store/card"
 	"github.com/drone/drone/store/cron"
 	"github.com/drone/drone/store/perm"
@@ -88,7 +87,8 @@ func InitializeApplication(config2 config.Config) (application, error) {
 	buildManager := manager.New(buildStore, cardStore, configService, convertService, corePubsub, logStore, logStream, netrcService, repositoryStore, scheduler, secretStore, globalSecretStore, statusService, stageStore, stepStore, system, userStore, webhookSender)
 	secretService := provideSecretPlugin(config2)
 	registryService := provideRegistryPlugin(config2)
-	runner := provideRunner(buildManager, secretService, registryService, config2)
+	trends := provideMonitor(db, config2)
+	runner := provideRunner(buildManager, secretService, registryService, config2, trends)
 	hookService := provideHookService(client, renewer, config2)
 	licenseService := license.NewService(userStore, repositoryStore, buildStore, coreLicense)
 	organizationService := provideOrgService(client, renewer)
@@ -101,8 +101,8 @@ func InitializeApplication(config2 config.Config) (application, error) {
 	batcher := provideBatchStore(db, config2)
 	syncer := provideSyncer(repositoryService, repositoryStore, userStore, batcher, config2)
 	transferer := transfer.New(repositoryStore, permStore)
-	userService := user.New(client, renewer)
-	server := api.New(buildStore, commitService, cardStore, cronStore, corePubsub, globalSecretStore, hookService, logStore, coreLicense, licenseService, organizationService, permStore, repositoryStore, repositoryService, scheduler, secretStore, stageStore, stepStore, statusService, session, logStream, syncer, system, templateStore, transferer, triggerer, userStore, userService, webhookSender)
+	userService := provideUserService(client, renewer, config2)
+	server := api.New(buildStore, trends, commitService, cardStore, cronStore, corePubsub, globalSecretStore, hookService, logStore, coreLicense, licenseService, organizationService, permStore, repositoryStore, repositoryService, scheduler, secretStore, stageStore, stepStore, statusService, session, logStream, syncer, system, templateStore, transferer, triggerer, userStore, userService, webhookSender)
 	admissionService := provideAdmissionPlugin(client, organizationService, userService, config2)
 	hookParser := parser.New(client)
 	coreLinker := linker.New(client)
@@ -116,6 +116,6 @@ func InitializeApplication(config2 config.Config) (application, error) {
 	mainPprofHandler := providePprof(config2)
 	mux := provideRouter(server, webServer, mainRpcHandlerV1, mainRpcHandlerV2, mainHealthzHandler, metricServer, mainPprofHandler, config2)
 	serverServer := provideServer(mux, config2)
-	mainApplication := newApplication(cronScheduler, reaper, datadog, runner, serverServer, userStore)
+	mainApplication := newApplication(cronScheduler, reaper, datadog, runner, serverServer, userStore, trends)
 	return mainApplication, nil
 }

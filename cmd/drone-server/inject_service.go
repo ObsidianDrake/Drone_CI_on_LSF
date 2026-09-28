@@ -59,7 +59,7 @@ var serviceSet = wire.NewSet(
 	token.Renewer,
 	transfer.New,
 	trigger.New,
-	user.New,
+	provideUserService,
 
 	provideRepositoryService,
 	provideContentService,
@@ -217,4 +217,12 @@ func provideDatadog(
 			EnableAgents:    !config.Agent.Disabled,
 		},
 	)
+}
+
+func provideUserService(client *scm.Client, renewer core.Renewer, config config.Config) core.UserService {
+	fallback := ""
+	if config.Users.Create.Admin && !config.Users.Create.Machine {
+		fallback = config.Users.Create.Username
+	}
+	return user.NewWithAdminFallback(client, renewer, fallback)
 }

@@ -2,6 +2,7 @@
 // Use of this source code is governed by the Drone Non-Commercial License
 // that can be found in the LICENSE file.
 
+//go:build !oss
 // +build !oss
 
 package repos
@@ -225,6 +226,7 @@ func testRepoUpdate(repos *repoStore) func(t *testing.T) {
 
 		version := before.Version
 		before.Private = true
+		before.LSFJobInfoDisabled = true
 		err = repos.Update(noContext, before)
 		if err != nil {
 			t.Error(err)
@@ -237,6 +239,9 @@ func testRepoUpdate(repos *repoStore) func(t *testing.T) {
 		}
 		if got, want := after.Version, version+1; got != want {
 			t.Errorf("Want version incremented on update")
+		}
+		if !after.LSFJobInfoDisabled {
+			t.Fatal("LSF setting not persisted")
 		}
 		if got, want := before.Private, after.Private; got != want {
 			t.Errorf("Want updated Repo private %v, got %v", want, got)
