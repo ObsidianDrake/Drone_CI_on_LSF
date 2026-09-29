@@ -68,7 +68,8 @@ env CGO_ENABLED=1 go test -mod=readonly ./store/repos ./operator/runner/lsf
 glibc 符號版本及執行檔能否載入；資料庫測試使用記憶體 SQLite。
 
 GitHub Actions 也在 `registry.access.redhat.com/ubi8/ubi:8.10` 中執行相同建置
-及測試，再上傳原有的 `drone-server-linux-amd64.tar.gz` 與 SHA-256 檔案。
+及 SQLite 測試；UBI 公開套件庫沒有 tcsh，因此 LSF 整合測試在安裝 tcsh 的
+GitHub runner 上執行。通過後上傳 `drone-server-linux-amd64.tar.gz` 與 SHA-256 檔案。
 這裡的容器只用於編譯；部署時仍直接在 RHEL 8 執行 server。
 既有 `.drone.yml` 的 `scripts/build.sh` 則保留供 Alpine 映像使用的靜態連結建置。
 

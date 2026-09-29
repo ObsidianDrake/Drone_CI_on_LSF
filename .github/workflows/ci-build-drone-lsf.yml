@@ -42,11 +42,19 @@ jobs:
             -e GOTOOLCHAIN=local \
             registry.access.redhat.com/ubi8/ubi:8.10 \
             bash -euxo pipefail -c '
-              dnf install -y gcc glibc-devel binutils file git ca-certificates tcsh python3
+              dnf install -y gcc glibc-devel binutils file git ca-certificates
               git config --global --add safe.directory /src
               bash scripts/build-rhel8.sh
-              go test -mod=readonly ./store/repos ./operator/runner/lsf
+              go test -mod=readonly ./store/repos
             '
+
+      # UBI's public repositories do not provide tcsh. Run the LSF integration
+      # tests on the host; the release binary above is still built only in UBI 8.
+      - name: Test LSF engine with tcsh
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tcsh
+          go test -mod=readonly ./operator/runner/lsf
 
       - name: Package binary
         working-directory: dist
