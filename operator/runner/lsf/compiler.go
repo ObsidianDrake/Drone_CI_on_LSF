@@ -157,7 +157,7 @@ func Compile(c *compiler.Compiler, p *yaml.Pipeline) *engine.Spec {
 				"git init .",
 				"git remote add origin \"$DRONE_REMOTE_URL\"",
 				"git fetch --no-tags" + depth + " origin \"$DRONE_COMMIT_SHA\"",
-				"git checkout --force --detach \"$DRONE_COMMIT_SHA\"",
+				"git -c advice.detachedHead=false checkout --force --detach \"$DRONE_COMMIT_SHA\"",
 			})
 			if p.Clone.SkipVerify {
 				step.Envs["GIT_SSL_NO_VERIFY"] = "true"
