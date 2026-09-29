@@ -2,6 +2,7 @@
 package lsf
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -18,6 +19,9 @@ import (
 	"github.com/drone/drone-runtime/engine"
 	"github.com/sirupsen/logrus"
 )
+
+// DebugRetainLabel retains the pipeline directory after normal lifecycle cleanup.
+const DebugRetainLabel = "lsf.drone.io/debug-retain"
 
 type Config struct {
 	Bsub, Bjobs, Bkill                           string
@@ -43,6 +47,7 @@ type pipeline struct {
 	destroyed       bool
 	submissionErr   error
 	jobInfoDisabled bool
+	debugRetain     bool
 	repoID          int64
 }
 
@@ -138,7 +143,7 @@ func (e *Engine) Setup(ctx context.Context, spec *engine.Spec) error {
 		return err
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	p := &pipeline{jobInfoDisabled: spec.Metadata.Labels[JobInfoDisabledLabel] == "true", ctx: ctx, cancel: cancel, dir: dir, workspace: work, jobs: make(map[*engine.Step]*job)}
+	p := &pipeline{debugRetain: spec.Metadata.Labels[DebugRetainLabel] == "true", jobInfoDisabled: spec.Metadata.Labels[JobInfoDisabledLabel] == "true", ctx: ctx, cancel: cancel, dir: dir, workspace: work, jobs: make(map[*engine.Step]*job)}
 	p.repoID, _ = strconv.ParseInt(spec.Metadata.Labels["lsf.drone.io/repo-id"], 10, 64)
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -207,7 +212,11 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 	if err := os.WriteFile(filepath.Join(dir, "commands.script"), script, 0600); err != nil {
 		return err
 	}
-	if err := os.WriteFile(j.log, nil, 0600); err != nil {
+	var initialLog []byte
+	if p.debugRetain {
+		initialLog = []byte(fmt.Sprintf("\n[Debug] Pipeline directory retained after completion: %s\n[Debug] LSF output: %s\n[Debug] LSF error: %s\n\n", p.dir, filepath.Join(j.dir, "scheduler.out"), filepath.Join(j.dir, "scheduler.err")))
+	}
+	if err := os.WriteFile(j.log, initialLog, 0600); err != nil {
 		return err
 	}
 	env := map[string]string{"PATH": os.Getenv("PATH"), "HOME": home}
@@ -267,7 +276,9 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 	}
 	sort.Strings(keys)
 	var wrapper strings.Builder
-	wrapper.WriteString("#!/bin/sh\nexec >" + quote(j.log) + " 2>&1\ncd " + quote(filepath.Join(p.workspace, step.WorkingDir)) + " || exit 125\n")
+	// The tail reader may already have consumed the Debug header before LSF starts.
+	// Never truncate this file or invalidate its current read offset.
+	wrapper.WriteString("#!/bin/sh\nexec >>" + quote(j.log) + " 2>&1\ncd " + quote(filepath.Join(p.workspace, step.WorkingDir)) + " || exit 125\n")
 	// A dedicated reader colors stderr as it arrives. Keep the command exit
 	// status and drain the reader before reporting completion to LSF.
 	stderrPipe := quote(filepath.Join(dir, "stderr.pipe"))
@@ -378,6 +389,7 @@ func (e *Engine) Start(ctx context.Context, spec *engine.Spec, step *engine.Step
 		e.TrackJob(p.repoID, j.id, "drone-"+filepath.Base(j.dir))
 	}
 	logrus.WithFields(logrus.Fields{"job": j.id, "step": step.Metadata.Name, "workspace": p.workspace}).Info("lsf: submitted job")
+
 	go e.monitor(p, j)
 	if err := os.WriteFile(filepath.Join(j.dir, "job.id"), []byte(j.id+"\n"), 0600); err != nil {
 		return err
@@ -517,8 +529,16 @@ func (e *Engine) Tail(ctx context.Context, spec *engine.Spec, step *engine.Step)
 		for {
 			n, err := file.Read(buf)
 			if n > 0 {
-				if _, err := writer.Write(buf[:n]); err != nil {
-					return
+				// The legacy runtime creates an extra empty record when a write
+				// contains multiple newline-terminated lines. Pipe writes stay
+				// separate for its io.Copy reader: send one line fragment at a time.
+				for _, part := range bytes.SplitAfter(buf[:n], []byte{'\n'}) {
+					if len(part) == 0 {
+						continue
+					}
+					if _, err := writer.Write(part); err != nil {
+						return
+					}
 				}
 			}
 			if err != nil && err != io.EOF {
@@ -574,6 +594,10 @@ func (e *Engine) Destroy(ctx context.Context, spec *engine.Spec) error {
 	e.mu.Unlock()
 	if cleanupErr != nil {
 		return cleanupErr
+	}
+	if p.debugRetain {
+		logrus.WithField("directory", p.dir).Info("lsf: Debug pipeline directory retained")
+		return nil
 	}
 	return os.RemoveAll(p.dir)
 }

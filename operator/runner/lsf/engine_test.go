@@ -467,3 +467,203 @@ steps:
 		t.Fatalf("batch status output: %s", output)
 	}
 }
+
+func TestDebugDirectoryRetention(t *testing.T) {
+	for _, debug := range []bool{false, true} {
+		e := testEngine(t)
+		spec := &engine.Spec{}
+		spec.Metadata.Labels = map[string]string{}
+		if debug {
+			spec.Metadata.Labels[DebugRetainLabel] = "true"
+		}
+		ctx := context.Background()
+		if err := e.Setup(ctx, spec); err != nil {
+			t.Fatal(err)
+		}
+		p, _ := e.lookup(spec)
+		for _, name := range []string{"commands.script", "scheduler.out", "scheduler.err"} {
+			if err := os.WriteFile(filepath.Join(p.dir, name), []byte("retained"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := e.Destroy(ctx, spec); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"commands.script", "scheduler.out", "scheduler.err"} {
+			_, err := os.Stat(filepath.Join(p.dir, name))
+			if debug && err != nil {
+				t.Fatal(err)
+			}
+			if !debug && !os.IsNotExist(err) {
+				t.Fatalf("normal build retained %s", name)
+			}
+		}
+		if _, err := e.lookup(spec); err == nil {
+			t.Fatal("engine state was not released")
+		}
+	}
+}
+
+func TestDebugRunRetainsSchedulerFiles(t *testing.T) {
+	for _, command := range []string{"echo debug-test", "exit 7"} {
+		t.Run(command, func(t *testing.T) {
+			e := testEngine(t)
+			spec := testSpec(t, "kind: pipeline\ntype: lsf\nname: debug\nclone:\n  disable: true\nsteps:\n- name: work\n  image: none\n  commands:\n  - "+command+"\n")
+			if spec.Metadata.Labels == nil {
+				spec.Metadata.Labels = map[string]string{}
+			}
+			spec.Metadata.Labels[DebugRetainLabel] = "true"
+			spec.Metadata.Labels[JobInfoDisabledLabel] = "true"
+			var logs strings.Builder
+			err := runtime.New(runtime.WithEngine(e), runtime.WithConfig(spec), runtime.WithHooks(&runtime.Hook{GotLine: func(_ *runtime.State, line *runtime.Line) error { logs.WriteString(line.Message); return nil }})).Run(context.Background())
+			if command == "exit 7" {
+				if exit, ok := err.(*runtime.ExitError); !ok || exit.Code != 7 {
+					t.Fatalf("expected exit 7: %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			for _, name := range []string{"scheduler.out", "scheduler.err", "commands.script", "job.id"} {
+				matches, err := filepath.Glob(filepath.Join(e.config.Workspace, "pipeline-*", "*", name))
+				if err != nil || len(matches) != 1 {
+					t.Fatalf("retained %s: %v %v", name, matches, err)
+				}
+			}
+			if !strings.Contains(logs.String(), "[Debug] Pipeline directory retained") || !strings.Contains(logs.String(), "scheduler.err") {
+				t.Fatalf("missing retained path: %s", logs.String())
+			}
+		})
+	}
+}
+
+// Reproduce a queued job: the reader consumes the Debug header before the
+// execution host starts the wrapper. Subsequent commands must not be skipped.
+func TestDebugLogReaderBeforeJobStarts(t *testing.T) {
+	e := testEngine(t)
+	spec := testSpec(t, `kind: pipeline
+type: lsf
+name: delayed
+clone:
+  disable: true
+steps:
+- name: work
+  image: none
+  commands:
+  - echo first-command-visible
+  - echo last-command-visible
+`)
+	if spec.Metadata.Labels == nil {
+		spec.Metadata.Labels = map[string]string{}
+	}
+	spec.Metadata.Labels[DebugRetainLabel] = "true"
+	ctx := context.Background()
+	if err := e.Setup(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+	defer e.Destroy(ctx, spec)
+	step := spec.Steps[0]
+	if err := e.Create(ctx, spec, step); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := e.lookup(spec)
+	j := p.jobs[step]
+	reader, err := os.Open(j.log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	header, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(header), "[Debug] Pipeline directory retained") {
+		t.Fatalf("missing initial header: %s", header)
+	}
+	// Execute the exact generated wrapper after reaching EOF, without depending
+	// on scheduler timing to trigger the former truncation race.
+	cmd := exec.Command("/bin/sh", j.wrapper)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("wrapper: %v %s", err, output)
+	}
+	output, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"first-command-visible", "last-command-visible"} {
+		if !strings.Contains(string(output), want) {
+			t.Fatalf("reader skipped %s: %q", want, output)
+		}
+	}
+	full, err := os.ReadFile(j.log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(full), string(header)) {
+		t.Fatal("Debug header overwritten")
+	}
+}
+
+func TestParallelDebugLogSpacing(t *testing.T) {
+	e := testEngine(t)
+	spec := testSpec(t, `kind: pipeline
+type: lsf
+name: spacing
+clone:
+  disable: true
+steps:
+- name: a
+  image: none
+  depends_on: []
+  commands:
+  - echo first
+  - sleep 0.1
+  - echo last
+- name: b
+  image: none
+  depends_on: []
+  commands:
+  - echo first
+  - echo last
+- name: c
+  image: none
+  depends_on: []
+  commands:
+  - sleep 0.1
+  - echo first
+  - echo last
+`)
+	if spec.Metadata.Labels == nil {
+		spec.Metadata.Labels = map[string]string{}
+	}
+	spec.Metadata.Labels[DebugRetainLabel] = "true"
+	spec.Metadata.Labels[JobInfoDisabledLabel] = "true"
+	var mu sync.Mutex
+	lines := map[string][]string{}
+	err := runtime.New(runtime.WithEngine(e), runtime.WithConfig(spec), runtime.WithHooks(&runtime.Hook{
+		GotLine: func(state *runtime.State, line *runtime.Line) error {
+			mu.Lock()
+			defer mu.Unlock()
+			name := state.Step.Metadata.Name
+			lines[name] = append(lines[name], line.Message)
+			return nil
+		},
+	})).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a", "b", "c"} {
+		records := lines[name]
+		if len(records) < 6 {
+			t.Fatalf("%s missing log records: %q", name, records)
+		}
+		for _, line := range records {
+			if line == "" {
+				t.Fatalf("%s: artificial empty record: %q", name, records)
+			}
+		}
+		// Initial blank, three Debug lines, one intentional blank, first command.
+		if !strings.HasPrefix(records[3], "[Debug] LSF error:") || records[4] != "\n" || !strings.HasPrefix(records[5], "\x1b[32m+ ") {
+			t.Fatalf("%s: inconsistent header spacing: %q", name, records)
+		}
+	}
+}

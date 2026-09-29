@@ -10,10 +10,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/drone/drone/core"
 	"github.com/drone/drone/handler/api/errors"
 	"github.com/drone/drone/handler/api/request"
 	"github.com/drone/drone/mock"
-	"github.com/drone/drone/core"
 
 	"github.com/go-chi/chi"
 	"github.com/golang/mock/gomock"
@@ -227,5 +227,50 @@ func TestRetry_TriggerError(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(got)
 	if diff := cmp.Diff(got, want); len(diff) != 0 {
 		t.Errorf("Diff: %s", diff)
+	}
+}
+
+func TestRetryDebugAuthorization(t *testing.T) {
+	for _, tc := range []struct {
+		name, query      string
+		admin, wantDebug bool
+		code             int
+	}{
+		{"admin debug", "?debug=true", true, true, 200},
+		{"nonadmin debug", "?debug=true", false, false, 403},
+		{"normal restart does not inherit debug", "", true, false, 200},
+		{"explicit normal restart", "?debug=false", false, false, 200},
+		{"invalid flag", "?debug=invalid", true, false, 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctl := gomock.NewController(t)
+			defer ctl.Finish()
+			repos := mock.NewMockRepositoryStore(ctl)
+			builds := mock.NewMockBuildStore(ctl)
+			triggerer := mock.NewMockTriggerer(ctl)
+			if tc.code == 200 {
+				previous := *mockBuild
+				previous.Debug = true
+				repos.EXPECT().FindName(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockRepo, nil)
+				builds.EXPECT().FindNumber(gomock.Any(), mockRepo.ID, int64(1)).Return(&previous, nil)
+				triggerer.EXPECT().Trigger(gomock.Any(), mockRepo, gomock.Any()).DoAndReturn(func(_ context.Context, _ *core.Repository, hook *core.Hook) (*core.Build, error) {
+					if hook.Debug != tc.wantDebug {
+						t.Fatalf("Debug = %v", hook.Debug)
+					}
+					return mockBuild, nil
+				})
+			}
+			c := chi.NewRouteContext()
+			c.URLParams.Add("owner", "octocat")
+			c.URLParams.Add("name", "hello-world")
+			c.URLParams.Add("number", "1")
+			req := httptest.NewRequest("POST", "/"+tc.query, nil)
+			req = req.WithContext(context.WithValue(request.WithUser(req.Context(), &core.User{Login: "tester", Admin: tc.admin}), chi.RouteCtxKey, c))
+			res := httptest.NewRecorder()
+			HandleRetry(repos, builds, triggerer)(res, req)
+			if res.Code != tc.code {
+				t.Fatalf("status=%d body=%s", res.Code, res.Body.String())
+			}
+		})
 	}
 }

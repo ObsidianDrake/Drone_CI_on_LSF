@@ -174,3 +174,14 @@ Drone 管理員可在 **Settings → General → Project Settings** 切換 **Sho
 關閉後仍即時顯示綠色 command、白色 stdout 與紅色 stderr，工作狀態查詢及取消功能照常，只不執行結尾的 `bjobs -a -l` 診斷查詢與資訊附加。每個 LSF pipeline stage 開始執行時讀取 repository 設定；不會改變已執行中的 stage 或既有 log。
 
 API 欄位為 `lsf_job_info_disabled`（`false` 表示顯示、`true` 表示隱藏）。非 Drone 管理員變更此欄位會收到 HTTP 403；其他設定儲存時帶入相同值不受影響。第一次啟動新版 server 時會自動新增資料庫欄位；附有 SQLite、MySQL 與 PostgreSQL migration，資料庫儲存測試以 SQLite 執行。
+
+
+## 管理員 Debug 與工作目錄保留
+
+已結束 build 的 Restart 旁提供 **Debug** 按鈕，只有 Drone 系統管理員可見；API 也會檢查系統管理員身分。Debug 會建立新的 build，並設定 `build.debug=true`，不會恢復已刪除的舊工作目錄。
+
+LSF Debug build 正常執行所有 steps，成功、失敗或取消後保留整個 pipeline 目錄，包括 workspace、commands script、`scheduler.out` 與 `scheduler.err`。取消仍會呼叫 bkill 並確認終止；保留目錄不代表 job 繼續執行。每個已提交 step 的 Drone log 會列出 `[Debug]` 保留路徑，不受「Show LSF job information」開關影響。
+
+一般 Restart 或 webhook build 維持原本清理行為；一般 Restart 不繼承前一次 build 的 Debug 標記。此功能適用於內建 LSF engine。
+
+保留目錄目前需由管理員在確認工作結束且完成除錯後手動清理；刪除 Drone build 歷史不會刪除這些檔案。目錄可能包含 secrets、clone 憑證與執行腳本，應維持原有受限權限，不要當作公開 artifact。LSF 的 `.out`／`.err` 仍可能是空檔，因為 commands 輸出由另一份 log 收集到 Drone。

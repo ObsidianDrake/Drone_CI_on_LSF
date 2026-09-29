@@ -59,6 +59,7 @@ func newUIAssets(base string) (*uiAssets, error) {
 
 func adaptMain(data []byte, base string) ([]byte, error) {
 	features := []struct{ old, replacement string }{
+		{`{data:_,userIsAdminOrHasWritePerm:r,view:M}`, `{data:_,userIsAdminOrHasWritePerm:r,userIsAdmin:!!(a&&a.admin),view:M}`},
 		{`{to:"/".concat(a,"/").concat(n,"/deployments"),exact:!0,label:"Deployments",tag:t?"span":l.c},`, ``},
 		{`Object(He.jsx)(dh.Deployments,{path:"/:namespace/:name/deployments",componentProps:{user:t,repo:x},visibility:S,exact:!0}),`, ``},
 		{`g=null;return g=s?null:c.length?`, `g=null;if(r.isError||(!s&&!Array.isArray(c)))return Object(He.jsxs)("div",{role:"alert",children:[Object(He.jsx)("p",{children:"Unable to load Secrets. "+(r.isError&&r.isError.message==="Not Implemented"?"This feature is unavailable in the current Drone OSS build.":r.isError&&r.isError.message||"Check your login and repository permissions.")}),Object(He.jsx)(Ye,{onClick:function(){l()},children:"Retry"})]});return g=s?null:c.length?`},
@@ -68,7 +69,7 @@ func adaptMain(data []byte, base string) ([]byte, error) {
 		{`Object(He.jsxs)("div",{className:rp("switch-row"),children:[Object(He.jsx)(pd,{id:"trusted",checked:v.trusted,onChange:y("trusted"),children:"Trusted"}),Object(He.jsx)("p",{className:rp("note"),children:"Enables privileged container settings."})]})`, `Object(He.jsxs)("div",{className:rp("switch-row"),children:[Object(He.jsx)(pd,{id:"trusted",checked:v.trusted,onChange:y("trusted"),children:"Trusted"}),Object(He.jsx)("p",{className:rp("note"),children:"Enables privileged container settings."})]}),Object(He.jsxs)("div",{className:rp("switch-row"),children:[Object(He.jsx)(pd,{id:"lsf_job_info_disabled",checked:!v.lsf_job_info_disabled,onChange:y("lsf_job_info_disabled"),children:"Show LSF job information"}),Object(He.jsx)("p",{className:rp("note"),children:"Append LSF job details after each step finishes."})]})`},
 		{`{value:"promote",content:"Promote"},`, ``},
 		{`,{value:"debug",content:"Debug"}`, ``},
-		{`Object(He.jsx)(su,{id:"build-actions",className:pu("controls"),menuItems:[{value:"restart",content:"Restart"}],menuAlignment:"right",onMenuItemSelect:s})`, `Object(He.jsx)(Ye,{className:pu("cancel-button","controls"),onClick:function(){s("restart")},children:"Restart"})`},
+		{`Object(He.jsx)(su,{id:"build-actions",className:pu("controls"),menuItems:[{value:"restart",content:"Restart"}],menuAlignment:"right",onMenuItemSelect:s})`, `Object(He.jsx)("div",{className:pu("controls"),children:Object(He.jsxs)("span",{style:{display:"inline-flex",gap:8},children:[Object(He.jsx)(Ye,{className:pu("cancel-button"),style:{width:88,boxSizing:"border-box"},onClick:function(){s("restart")},children:"Restart"}),e.userIsAdmin&&Object(He.jsx)(Ye,{className:pu("cancel-button"),style:{width:88,boxSizing:"border-box"},title:"Run again and retain the LSF working directory",onClick:function(){s("debug")},children:"Debug"})]})})`},
 		{`Object(He.jsx)(oi.Radio,{id:"promote",name:"promote",label:"Promote",value:"promote",checked:"promote"===d.action,onChange:O("action")}),`, ``},
 		{`Ps(!!R.get("target"))`, `Ps("rollback"===D&&!!R.get("target"))`},
 	}

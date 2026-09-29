@@ -90,7 +90,7 @@ func TestPromoteRemoved(t *testing.T) {
 				t.Fatalf("base %q still includes %s", base, removed)
 			}
 		}
-		for _, kept := range []string{`className:pu("cancel-button","controls"),onClick:function(){s("restart")},children:"Restart"`} {
+		for _, kept := range []string{`userIsAdmin:!!(a&&a.admin)`, `e.userIsAdmin&&Object(He.jsx)(Ye`, `s("debug")},children:"Debug"`, `className:pu("cancel-button"),style:{width:88,boxSizing:"border-box"},onClick:function(){s("restart")},children:"Restart"`, `className:pu("controls"),children:Object(He.jsxs)("span",{style:{display:"inline-flex",gap:8}`} {
 			if !bytes.Contains(data, []byte(kept)) {
 				t.Fatalf("missing %s", kept)
 			}

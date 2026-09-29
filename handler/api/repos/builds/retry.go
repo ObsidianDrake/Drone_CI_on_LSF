@@ -15,6 +15,7 @@
 package builds
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -38,6 +39,19 @@ func HandleRetry(
 			name      = chi.URLParam(r, "name")
 			user, _   = request.UserFrom(r.Context())
 		)
+		debugRun := false
+		if values, ok := r.URL.Query()["debug"]; ok {
+			if len(values) != 1 || (values[0] != "true" && values[0] != "false") {
+				render.BadRequestf(w, "debug must be true or false")
+				return
+			}
+			debugRun = values[0] == "true"
+			if debugRun && (user == nil || !user.Admin) {
+				render.Forbidden(w, fmt.Errorf("Drone administrator access required for Debug"))
+				return
+			}
+		}
+
 		number, err := strconv.ParseInt(chi.URLParam(r, "number"), 10, 64)
 		if err != nil {
 			render.BadRequest(w, err)
@@ -64,6 +78,7 @@ func HandleRetry(
 		}
 
 		hook := &core.Hook{
+			Debug:        debugRun,
 			Parent:       prev.Number,
 			Trigger:      user.Login,
 			Event:        prev.Event,

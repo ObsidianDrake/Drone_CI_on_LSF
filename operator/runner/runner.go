@@ -364,6 +364,7 @@ func (r *Runner) Run(ctx context.Context, id int64) error {
 			ir.Metadata.Labels = make(map[string]string)
 		}
 		ir.Metadata.Labels["lsf.drone.io/repo-id"] = fmt.Sprint(m.Repo.ID)
+		ir.Metadata.Labels[lsf.DebugRetainLabel] = fmt.Sprint(m.Build.Debug)
 		ir.Metadata.Labels[lsf.JobInfoDisabledLabel] = fmt.Sprint(m.Repo.LSFJobInfoDisabled)
 	} else {
 		ir = comp.Compile(pipeline)
