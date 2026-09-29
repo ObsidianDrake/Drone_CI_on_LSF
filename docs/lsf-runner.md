@@ -4,18 +4,21 @@
 
 ## 本機模擬啟動
 
+需要 Go 1.25.0 以上及 GCC；gRPC 已升級至 `v1.84.0`。SQLite driver
+需要 `CGO_ENABLED=1`，不可透過關閉 CGO 解決 glibc 相容性問題。
+
 開發時可直接執行 source（Go 仍會自動編譯，不必手動 build），沿用已設定的 tcsh 環境：
 
 ```tcsh
 source examples/drone-env.tcsh
 source examples/lsf/mock-env.tcsh
-go run -tags 'oss nolimit' ./cmd/drone-server
+env CGO_ENABLED=1 go run -tags 'oss nolimit' ./cmd/drone-server
 ```
 
 也可從 repository 根目錄，先編譯 server，再於保留原有 SCM、資料庫及 server 設定的環境中啟動：
 
 ```tcsh
-go build -tags 'oss nolimit' -o /tmp/drone-server-lsf ./cmd/drone-server
+env CGO_ENABLED=1 go build -tags 'oss nolimit' -o /tmp/drone-server-lsf ./cmd/drone-server
 
 setenv PATH "${cwd}/tools/lsf-mock/bin:${PATH}"
 rehash
@@ -48,6 +51,29 @@ steps:
 ```
 
 Drone 在執行前會展開 YAML 中的環境變數；執行時才由 tcsh 展開的 `$` 必須寫成 `$$`。所有 commands 在同一個 tcsh script 中執行，可保留 `set`、`cd` 與 `source` 的效果；`-f` 不讀 `.tcshrc`，公司環境初始化可明確使用 `source /shared/company/setup.tcsh`。`-e` 在失敗時退出；commands 必須使用 tcsh 語法。
+
+## RHEL 8 正式建置
+
+公司主機使用 RHEL 8（glibc 2.28）。啟用 CGO 後，執行檔會依賴編譯環境的
+glibc，因此必須在 RHEL 8 或 UBI 8 中編譯，不能直接搬用 Ubuntu 編譯的動態
+連結執行檔。安裝 Go 1.25.0 以上、GCC、glibc-devel、binutils 及 file 後，
+在 repository 根目錄執行（可從 tcsh 呼叫）：
+
+```tcsh
+bash scripts/build-rhel8.sh
+env CGO_ENABLED=1 go test -mod=readonly ./store/repos ./operator/runner/lsf
+```
+
+產物為 `dist/drone-server`。腳本強制使用 `CGO_ENABLED=1` 及系統 GCC，並檢查
+glibc 符號版本及執行檔能否載入；資料庫測試使用記憶體 SQLite。
+
+GitHub Actions 也在 `registry.access.redhat.com/ubi8/ubi:8.10` 中執行相同建置
+及測試，再上傳原有的 `drone-server-linux-amd64.tar.gz` 與 SHA-256 檔案。
+這裡的容器只用於編譯；部署時仍直接在 RHEL 8 執行 server。
+既有 `.drone.yml` 的 `scripts/build.sh` 則保留供 Alpine 映像使用的靜態連結建置。
+
+公司環境沿用既有 Nexus / `GOPROXY` 設定。升級 gRPC 也會更新間接依賴；
+若其他版本被 Nexus 回覆 403，需確認該套件的核准版本。
 
 ## 公司既有 YAML
 

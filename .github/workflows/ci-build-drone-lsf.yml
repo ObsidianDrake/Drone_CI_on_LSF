@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    name: Linux amd64 binary
+    name: RHEL 8 amd64 binary (CGO)
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     env:
@@ -26,15 +26,27 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
-          cache: true
+          go-version: '1.25.x'
+          cache: false
 
-      - name: Build server
+      # Keep JavaScript actions on the host; compile and test against UBI 8's
+      # glibc 2.28, not the newer glibc supplied by the Ubuntu runner.
+      - name: Build and verify in UBI 8
         run: |
-          mkdir -p dist
-          go build -mod=readonly -trimpath -o dist/drone-server ./cmd/drone-server
-          go version -m dist/drone-server
-          file dist/drone-server
+          docker run --rm --platform linux/amd64 \
+            -v "$PWD:/src" \
+            -v "$(go env GOROOT):/usr/local/go:ro" \
+            -w /src \
+            -e PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            -e GOOS -e GOARCH -e CGO_ENABLED \
+            -e GOTOOLCHAIN=local \
+            registry.access.redhat.com/ubi8/ubi:8.10 \
+            bash -euxo pipefail -c '
+              dnf install -y gcc glibc-devel binutils file git ca-certificates tcsh python3
+              git config --global --add safe.directory /src
+              bash scripts/build-rhel8.sh
+              go test -mod=readonly ./store/repos ./operator/runner/lsf
+            '
 
       - name: Package binary
         working-directory: dist

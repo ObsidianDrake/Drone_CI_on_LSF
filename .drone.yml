@@ -9,17 +9,20 @@ platform:
 
 steps:
 - name: test
-  image: golang:1.24.13
+  image: golang:1.25
+  environment:
+    CGO_ENABLED: '1'
   commands:
   - go test -race ./...
   - go build -o /dev/null github.com/drone/drone/cmd/drone-server
   - go build -o /dev/null -tags "oss nolimit" github.com/drone/drone/cmd/drone-server
   
 - name: build
-  image: golang:1.24.13
+  image: golang:1.25
   commands:
   - sh scripts/build.sh
   environment:
+    CGO_ENABLED: '1'
     GOARCH: amd64
     GOOS: linux
 
@@ -53,10 +56,11 @@ platform:
 
 steps:
 - name: build
-  image: golang:1.24.13
+  image: golang:1.25
   commands:
   - sh scripts/build.sh
   environment:
+    CGO_ENABLED: '1'
     GOARCH: arm64
     GOOS: linux
 
@@ -104,4 +108,3 @@ trigger:
 
 depends_on:
 - linux-arm64
-

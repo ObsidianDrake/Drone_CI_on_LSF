@@ -1,5 +1,8 @@
 #!/bin/sh
 
+set -eu
+export CGO_ENABLED=1
+
 echo "building docker images for ${GOOS}/${GOARCH} ..."
 
 REPO="github.com/drone/drone"

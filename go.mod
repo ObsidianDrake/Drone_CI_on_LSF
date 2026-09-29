@@ -10,6 +10,7 @@ require (
 	github.com/Azure/azure-storage-blob-go v0.7.0
 	github.com/asaskevich/govalidator v0.0.0-20190424111038-f61b66f89f4a
 	github.com/aws/aws-sdk-go v1.43.16
+	github.com/buildkite/yaml v2.1.0+incompatible
 	github.com/coreos/go-semver v0.3.0
 	github.com/dchest/authcookie v0.0.0-20120917135355-fbdef6e99866
 	github.com/dchest/uniuri v0.0.0-20160212164326-8902c56451e9
@@ -30,7 +31,7 @@ require (
 	github.com/go-redsync/redsync/v4 v4.3.0
 	github.com/go-sql-driver/mysql v1.4.0
 	github.com/golang/mock v1.6.0
-	github.com/google/go-cmp v0.6.0
+	github.com/google/go-cmp v0.7.0
 	github.com/google/go-jsonnet v0.20.0
 	github.com/google/wire v0.2.1
 	github.com/gosimple/slug v1.3.0
@@ -50,8 +51,8 @@ require (
 	github.com/sirupsen/logrus v1.9.3
 	github.com/unrolled/secure v0.0.0-20181022170031-4b6b7cf51606
 	go.starlark.net v0.0.0-20221020143700-22309ac47eac
-	golang.org/x/crypto v0.40.0
-	golang.org/x/sync v0.16.0
+	golang.org/x/crypto v0.54.0
+	golang.org/x/sync v0.22.0
 	gopkg.in/yaml.v2 v2.4.0
 )
 
@@ -61,8 +62,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bmatcuk/doublestar v1.1.1 // indirect
-	github.com/buildkite/yaml v2.1.0+incompatible // indirect
-	github.com/cespare/xxhash/v2 v2.2.0 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/codegangsta/negroni v1.0.0 // indirect
 	github.com/containerd/containerd v1.6.23 // indirect
 	github.com/containerd/errdefs v0.3.0 // indirect
@@ -89,13 +89,13 @@ require (
 	github.com/prometheus/procfs v0.10.1 // indirect
 	github.com/rainycape/unidecode v0.0.0-20150907023854-cb7f23ec59be // indirect
 	github.com/vinzenz/yaml v0.0.0-20170920082545-91409cdd725d // indirect
-	golang.org/x/net v0.42.0 // indirect
-	golang.org/x/sys v0.34.0 // indirect
-	golang.org/x/text v0.27.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20240401170217-c3f982113cda // indirect
-	google.golang.org/grpc v1.59.0 // indirect
-	google.golang.org/protobuf v1.35.2 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800 // indirect
+	google.golang.org/grpc v1.84.0 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
 
@@ -103,4 +103,4 @@ replace github.com/h2non/gock => gopkg.in/h2non/gock.v1 v1.0.14
 
 replace github.com/containerd/containerd => github.com/containerd/containerd v1.7.29
 
-go 1.24.13
+go 1.25.0

@@ -8,6 +8,7 @@ tasks:
     cmds: [ go install -v ]
     env:
       GO111MODULE: on
+      CGO_ENABLED: '1'
 
   build:
     cmds:
@@ -18,7 +19,7 @@ tasks:
     env:
       GOOS: linux
       GOARCH: amd64
-      CGO_ENABLED: '0'
+      CGO_ENABLED: '1'
       GO111MODULE: 'on'
     cmds:
     - cmd: >
@@ -55,6 +56,7 @@ tasks:
     - go test ./...
     env:
       GO111MODULE: 'on'
+      CGO_ENABLED: '1'
 
   test-mysql:
     env:
