@@ -165,13 +165,13 @@ stderr 透過獨立 pipe 逐行以 ANSI 紅色串流到相同的 step log，行�
 
 原生 clone 的 Git 已知一般提示（`hint:`、`From ...`、fetch branch 狀態、`HEAD is now at ...` 與常見進度）會轉為白色 stdout 日誌。`fatal:`、`error:`、warning 與未辨識的 stderr 訊息保留紅色；其他 step 的 stderr 規則不變。這是依訊息格式分類，不影響 Git 的退出碼判定。
 
-每個已確認結束的 LSF job（含成功、失敗與已確認取消）會在 step log 結尾以白色顯示 `bjobs -a -l <ID>` 的 Job ID、Job Name、User、Queue、Command、Host、CWD、Output File、Error File。Host 是實際執行主機，Command 是 LSF 收到的 wrapper 命令；各 YAML commands 仍顯示於前方綠色日誌。Output/Error File 是 scheduler 診斷檔，正常清理後不保留。查詢失敗或缺少欄位顯示 N/A，不改變 step 退出碼；未提交、跳過或尚無法確認終止的 job 不會附加完成摘要。公司的 bjobs wrapper 需支援英文 long output，格式參考 [IBM bjobs 說明](https://www.ibm.com/docs/en/spectrum-lsf/10.1.0?topic=bjobs-description)。
+每個已確認結束的 LSF job（含成功、失敗與已確認取消）會在 step log 結尾直接附加該 step 的 `scheduler.out` 原始內容，保留原有欄位、縮排與換行，不再查詢或解析 `bjobs -a -l`。內容置於 `LSF job information (scheduler.out)` 區塊；不包含 `scheduler.err`。檔案不存在或無法讀取時顯示 `scheduler.out is unavailable.`，空檔顯示 `scheduler.out is empty.`，不改變 step 退出碼。讀取的是 job 確認結束時已可取得的檔案內容；未提交、跳過或尚無法確認終止的 job 不會附加此區塊。一般 build 仍在讀取後清理工作目錄，Debug build 則保留檔案。
 
 ## Repository 的 job information 開關
 
 Drone 管理員可在 **Settings → General → Project Settings** 切換 **Show LSF job information**，再按 **Save Changes**。預設開啟，舊 repository 升級後也保留目前行為。
 
-關閉後仍即時顯示綠色 command、白色 stdout 與紅色 stderr，工作狀態查詢及取消功能照常，只不執行結尾的 `bjobs -a -l` 診斷查詢與資訊附加。每個 LSF pipeline stage 開始執行時讀取 repository 設定；不會改變已執行中的 stage 或既有 log。
+關閉後仍即時顯示綠色 command、白色 stdout 與紅色 stderr，工作狀態查詢及取消功能照常，只不附加結尾的 `scheduler.out` 內容。每個 LSF pipeline stage 開始執行時讀取 repository 設定；不會改變已執行中的 stage 或既有 log。
 
 API 欄位為 `lsf_job_info_disabled`（`false` 表示顯示、`true` 表示隱藏）。非 Drone 管理員變更此欄位會收到 HTTP 403；其他設定儲存時帶入相同值不受影響。第一次啟動新版 server 時會自動新增資料庫欄位；附有 SQLite、MySQL 與 PostgreSQL migration，資料庫儲存測試以 SQLite 執行。
 

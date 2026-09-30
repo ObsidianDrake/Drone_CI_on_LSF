@@ -94,7 +94,7 @@ steps:
 	if len(codes) != 2 || codes[0] != 0 || codes[1] != 7 {
 		t.Fatalf("step exit codes: %v", codes)
 	}
-	for _, want := range []string{"********", "\x1b[31mstderr-message\x1b[0;37m", "job=", "Job ID:", "Job Name: drone-", "User:", "Queue:", "Command: /bin/sh", "Host:", "CWD:", "Output File:", "Error File:"} {
+	for _, want := range []string{"********", "\x1b[31mstderr-message\x1b[0;37m", "job=", "--- LSF job information (scheduler.out) ---", "scheduler.out is empty."} {
 		if !strings.Contains(logs.String(), want) {
 			t.Fatalf("logs %q missing %q", logs.String(), want)
 		}

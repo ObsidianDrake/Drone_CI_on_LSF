@@ -1,46 +1,58 @@
 package lsf
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-	"time"
+
+	"github.com/drone/drone-runtime/engine"
 )
 
-func TestJobDetailsWrappedAndMultipleHosts(t *testing.T) {
-	input := `Job <42>, Job Name <test>, User <alice>, Status <DONE>, Queue <normal>, C
-                     ommand </bin/sh /shared/run.sh>
-Submitted from host <submit>, CWD </shared>, Output File </shared/scheduler.
-                     out>, Error File </shared/scheduler.err>;
-Started 2 Task(s) on Hosts <host1> <host2>, Execution Home </home/alice>, Execution CWD </shared/work>;
-`
-	got := jobDetails(input)
-	for k, want := range map[string]string{"Job": "42", "Job Name": "test", "User": "alice", "Queue": "normal", "Command": "/bin/sh /shared/run.sh", "Host": "host1, host2", "CWD": "/shared/work", "Output File": "/shared/scheduler.out", "Error File": "/shared/scheduler.err"} {
-		if got[k] != want {
-			t.Errorf("%s: got %q, want %q", k, got[k], want)
-		}
-	}
-}
-
-func TestJobSummaryUnavailable(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "output.log")
-	if err := os.WriteFile(path, []byte("original output\n"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	e := &Engine{config: Config{Bjobs: "/bin/false", CommandTimeout: time.Second}}
-	j := &job{id: "42", log: path}
-	e.appendJobSummary(j)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"original output\n", "Job ID: 42", "Job details unavailable", "Host: N/A", "Error File: N/A"} {
-		if !strings.Contains(string(data), want) {
-			t.Fatalf("missing %q: %s", want, data)
-		}
-	}
-	if j.err != nil || j.state.ExitCode != 0 {
-		t.Fatal("diagnostic query changed step result")
+func TestJobSummarySchedulerOutput(t *testing.T) {
+	const report = "Sender: LSF System\r\nSubject: Job <42>: Done\r\n\r\nResource usage summary:\n    CPU time : 1.25 sec.\n\tMax Memory : 42 MB\n自訂欄位: 100% <value>\n"
+	for _, test := range []struct {
+		name, data, want   string
+		missing, directory bool
+	}{
+		{name: "raw report", data: report, want: report},
+		{name: "no final newline", data: "Exited with exit code 7.", want: "Exited with exit code 7.\n"},
+		{name: "empty file", want: "scheduler.out is empty.\n"},
+		{name: "missing file", missing: true, want: "scheduler.out is unavailable.\n"},
+		{name: "unreadable file", directory: true, want: "scheduler.out is unavailable.\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "output.log")
+			if err := os.WriteFile(path, []byte("original output\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			scheduler := filepath.Join(dir, "scheduler.out")
+			if test.directory {
+				if err := os.Mkdir(scheduler, 0700); err != nil {
+					t.Fatal(err)
+				}
+			} else if !test.missing {
+				if err := os.WriteFile(scheduler, []byte(test.data), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// The summary must never need a bjobs query, even with an invalid CLI.
+			e := &Engine{config: Config{Bjobs: filepath.Join(dir, "nonexistent-bjobs")}}
+			previousErr := errors.New("original step error")
+			j := &job{id: "42", dir: dir, log: path, err: previousErr, state: engine.State{Exited: true, ExitCode: 7}}
+			e.appendJobSummary(j)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "original output\n\n\033[0;37m--- LSF job information (scheduler.out) ---\n" + test.want + "--- End LSF job information ---\n"
+			if string(data) != want {
+				t.Fatalf("got %q, want %q", data, want)
+			}
+			if j.err != previousErr || j.state.ExitCode != 7 || !j.state.Exited {
+				t.Fatal("scheduler output changed the step result")
+			}
+		})
 	}
 }
