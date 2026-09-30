@@ -150,6 +150,8 @@ step 的 `HOME` 使用獨立目錄，clone 的 netrc 不會覆蓋服務帳號的
 - 沒有 LSF job arrays、互動工作或依賴 LSF 自己排 step 的功能；step 相依性由 Drone runtime 管理。
 - 已以本機 mock 驗證，尚未連線公司 LSF 叢集驗證 wrapper、共享檔案系統與權限配置。
 
+Graph View 使用 build API 中各 step 的 `depends_on` 繪製分支與匯合。內建 runner 會將編譯後的相依關係一併保存；升級前未保存相依資訊的舊 build 仍可能顯示直線，需重新執行 build 才會產生完整圖形資料。這項顯示修正不改變實際排程方式。
+
 CLI 介面參考 IBM 的 [自訂 bjobs 輸出](https://www.ibm.com/docs/en/spectrum-lsf/10.1.0?topic=information-customize-job-output)、[bsub -env](https://www.ibm.com/docs/en/SSWRJV_10.1.0/lsf_command_ref/bsub.env.1.html) 與 [bsub -cwd](https://www.ibm.com/docs/en/spectrum-lsf/10.1.0?topic=options-cwd)。
 
 ## 驗證

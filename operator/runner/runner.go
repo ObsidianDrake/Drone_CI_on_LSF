@@ -385,6 +385,7 @@ func (r *Runner) Run(ctx context.Context, id int64) error {
 			StageID:   m.Stage.ID,
 			Status:    core.StatusPending,
 			ErrIgnore: s.IgnoreErr,
+			DependsOn: append([]string(nil), s.DependsOn...),
 		}
 		steps[dst.Name] = dst
 		m.Stage.Steps = append(m.Stage.Steps, dst)
