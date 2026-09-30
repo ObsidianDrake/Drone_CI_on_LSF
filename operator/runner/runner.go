@@ -364,6 +364,8 @@ func (r *Runner) Run(ctx context.Context, id int64) error {
 			ir.Metadata.Labels = make(map[string]string)
 		}
 		ir.Metadata.Labels["lsf.drone.io/repo-id"] = fmt.Sprint(m.Repo.ID)
+		ir.Metadata.Labels["lsf.drone.io/build-id"] = fmt.Sprint(m.Build.ID)
+		ir.Metadata.Labels["lsf.drone.io/stage-id"] = fmt.Sprint(m.Stage.ID)
 		ir.Metadata.Labels[lsf.DebugRetainLabel] = fmt.Sprint(m.Build.Debug)
 		ir.Metadata.Labels[lsf.JobInfoDisabledLabel] = fmt.Sprint(m.Repo.LSFJobInfoDisabled)
 	} else {
@@ -585,6 +587,12 @@ func (r *Runner) Run(ctx context.Context, id int64) error {
 // the server for pending builds to execute.
 func (r *Runner) Start(ctx context.Context, n int) error {
 	var g errgroup.Group
+	if backend, ok := r.Engine.(*lsf.Engine); ok && n > 0 {
+		g.Go(func() error {
+			backend.RunDebugCleanup(ctx)
+			return nil
+		})
+	}
 	for i := 0; i < n; i++ {
 		g.Go(func() error {
 			return r.start(ctx)

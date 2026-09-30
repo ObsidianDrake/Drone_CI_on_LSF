@@ -111,7 +111,9 @@ func provideEngine(config config.Config) (engine.Engine, error) {
 			Workspace: config.LSF.Workspace, Queue: config.LSF.Queue,
 			Resources: config.LSF.Resources, Shell: config.LSF.Shell, Slots: config.LSF.Slots,
 			PollInterval: config.LSF.PollInterval, CommandTimeout: config.LSF.CommandTimeout,
-			CleanupTimeout: config.LSF.CleanupTimeout,
+			CleanupTimeout:       config.LSF.CleanupTimeout,
+			DebugRetention:       config.LSF.DebugRetention,
+			DebugCleanupInterval: config.LSF.DebugCleanupInterval,
 		})
 	default:
 		return nil, fmt.Errorf("unsupported runner engine %q", config.Runner.Engine)

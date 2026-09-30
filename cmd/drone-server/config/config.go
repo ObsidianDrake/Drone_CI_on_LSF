@@ -253,17 +253,19 @@ type (
 	}
 
 	LSF struct {
-		Bsub           string        `envconfig:"DRONE_LSF_BSUB" default:"bsub"`
-		Bjobs          string        `envconfig:"DRONE_LSF_BJOBS" default:"bjobs"`
-		Bkill          string        `envconfig:"DRONE_LSF_BKILL" default:"bkill"`
-		Workspace      string        `envconfig:"DRONE_LSF_WORKSPACE"`
-		Queue          string        `envconfig:"DRONE_LSF_QUEUE"`
-		Resources      string        `envconfig:"DRONE_LSF_RESOURCES"`
-		Shell          string        `envconfig:"DRONE_LSF_SHELL" default:"/bin/tcsh"`
-		Slots          int           `envconfig:"DRONE_LSF_SLOTS" default:"1"`
-		PollInterval   time.Duration `envconfig:"DRONE_LSF_POLL_INTERVAL" default:"1s"`
-		CommandTimeout time.Duration `envconfig:"DRONE_LSF_COMMAND_TIMEOUT" default:"30s"`
-		CleanupTimeout time.Duration `envconfig:"DRONE_LSF_CLEANUP_TIMEOUT" default:"1m"`
+		Bsub                 string        `envconfig:"DRONE_LSF_BSUB" default:"bsub"`
+		Bjobs                string        `envconfig:"DRONE_LSF_BJOBS" default:"bjobs"`
+		Bkill                string        `envconfig:"DRONE_LSF_BKILL" default:"bkill"`
+		Workspace            string        `envconfig:"DRONE_LSF_WORKSPACE"`
+		Queue                string        `envconfig:"DRONE_LSF_QUEUE"`
+		Resources            string        `envconfig:"DRONE_LSF_RESOURCES"`
+		Shell                string        `envconfig:"DRONE_LSF_SHELL" default:"/bin/tcsh"`
+		Slots                int           `envconfig:"DRONE_LSF_SLOTS" default:"1"`
+		PollInterval         time.Duration `envconfig:"DRONE_LSF_POLL_INTERVAL" default:"1s"`
+		CommandTimeout       time.Duration `envconfig:"DRONE_LSF_COMMAND_TIMEOUT" default:"30s"`
+		CleanupTimeout       time.Duration `envconfig:"DRONE_LSF_CLEANUP_TIMEOUT" default:"1m"`
+		DebugRetention       time.Duration `envconfig:"DRONE_LSF_DEBUG_RETENTION" default:"168h"`
+		DebugCleanupInterval time.Duration `envconfig:"DRONE_LSF_DEBUG_CLEANUP_INTERVAL" default:"1h"`
 	}
 
 	// Server provides the server configuration.

@@ -28,6 +28,7 @@ type Config struct {
 	Workspace, Queue, Resources, Shell           string
 	Slots                                        int
 	PollInterval, CommandTimeout, CleanupTimeout time.Duration
+	DebugRetention, DebugCleanupInterval         time.Duration
 }
 
 type Engine struct {
@@ -39,16 +40,17 @@ type Engine struct {
 }
 
 type pipeline struct {
-	mu              sync.Mutex // serializes submission against destruction
-	ctx             context.Context
-	cancel          context.CancelFunc
-	dir, workspace  string
-	jobs            map[*engine.Step]*job
-	destroyed       bool
-	submissionErr   error
-	jobInfoDisabled bool
-	debugRetain     bool
-	repoID          int64
+	mu               sync.Mutex // serializes submission against destruction
+	ctx              context.Context
+	cancel           context.CancelFunc
+	dir, workspace   string
+	jobs             map[*engine.Step]*job
+	destroyed        bool
+	submissionErr    error
+	jobInfoDisabled  bool
+	debugRetain      bool
+	repoID           int64
+	buildID, stageID int64
 }
 
 type job struct {
@@ -110,6 +112,15 @@ func New(config Config) (*Engine, error) {
 	if config.CleanupTimeout == 0 {
 		config.CleanupTimeout = time.Minute
 	}
+	if config.DebugRetention == 0 {
+		config.DebugRetention = 7 * 24 * time.Hour
+	}
+	if config.DebugCleanupInterval == 0 {
+		config.DebugCleanupInterval = time.Hour
+	}
+	if config.DebugRetention < 0 || config.DebugCleanupInterval < 0 {
+		return nil, fmt.Errorf("lsf: Debug retention and cleanup interval must be positive")
+	}
 	if config.Slots < 1 || config.PollInterval < 0 || config.CommandTimeout < 0 || config.CleanupTimeout < 0 {
 		return nil, fmt.Errorf("lsf: slots and timeouts must be positive")
 	}
@@ -145,6 +156,8 @@ func (e *Engine) Setup(ctx context.Context, spec *engine.Spec) error {
 	ctx, cancel := context.WithCancel(ctx)
 	p := &pipeline{debugRetain: spec.Metadata.Labels[DebugRetainLabel] == "true", jobInfoDisabled: spec.Metadata.Labels[JobInfoDisabledLabel] == "true", ctx: ctx, cancel: cancel, dir: dir, workspace: work, jobs: make(map[*engine.Step]*job)}
 	p.repoID, _ = strconv.ParseInt(spec.Metadata.Labels["lsf.drone.io/repo-id"], 10, 64)
+	p.buildID, _ = strconv.ParseInt(spec.Metadata.Labels["lsf.drone.io/build-id"], 10, 64)
+	p.stageID, _ = strconv.ParseInt(spec.Metadata.Labels["lsf.drone.io/stage-id"], 10, 64)
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if _, exists := e.pipelines[spec]; exists {
@@ -214,7 +227,7 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 	}
 	var initialLog []byte
 	if p.debugRetain {
-		initialLog = []byte(fmt.Sprintf("\n[Debug] Pipeline directory retained after completion: %s\n[Debug] LSF output: %s\n[Debug] LSF error: %s\n\n", p.dir, filepath.Join(j.dir, "scheduler.out"), filepath.Join(j.dir, "scheduler.err")))
+		initialLog = []byte(fmt.Sprintf("\n[Debug] Pipeline directory retained after completion: %s (retention: %s; expiry recorded in %s after confirmed completion)\n[Debug] LSF output: %s\n[Debug] LSF error: %s\n\n", p.dir, e.config.DebugRetention, debugRetentionFile, filepath.Join(j.dir, "scheduler.out"), filepath.Join(j.dir, "scheduler.err")))
 	}
 	if err := os.WriteFile(j.log, initialLog, 0600); err != nil {
 		return err
@@ -586,18 +599,19 @@ func (e *Engine) Destroy(ctx context.Context, spec *engine.Spec) error {
 		case <-j.done:
 		}
 		if !j.confirmed {
-			cleanupErr = j.err
+			cleanupErr = fmt.Errorf("lsf: job %s termination unconfirmed; retained %s: %v", j.id, p.dir, j.err)
 		}
 	}
-	e.mu.Lock()
-	delete(e.pipelines, spec)
-	e.mu.Unlock()
+	defer func() {
+		e.mu.Lock()
+		delete(e.pipelines, spec)
+		e.mu.Unlock()
+	}()
 	if cleanupErr != nil {
 		return cleanupErr
 	}
 	if p.debugRetain {
-		logrus.WithField("directory", p.dir).Info("lsf: Debug pipeline directory retained")
-		return nil
+		return e.retainDebug(p, time.Now().UTC())
 	}
 	return os.RemoveAll(p.dir)
 }

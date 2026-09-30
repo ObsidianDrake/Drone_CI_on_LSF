@@ -128,6 +128,8 @@ BSUB_OPTION: >-
 | `DRONE_LSF_POLL_INTERVAL` | `1s` | 查詢狀態與讀取日誌間隔 |
 | `DRONE_LSF_COMMAND_TIMEOUT` | `30s` | 單次 LSF CLI 的逾時 |
 | `DRONE_LSF_CLEANUP_TIMEOUT` | `1m` | 取消後等待 LSF 確認結束的上限 |
+| `DRONE_LSF_DEBUG_RETENTION` | `168h`（7 天） | Debug pipeline 確認收尾後的保留期限 |
+| `DRONE_LSF_DEBUG_CLEANUP_INTERVAL` | `1h` | Debug 到期目錄的檢查間隔；啟動時也檢查 |
 | `DRONE_RUNNER_CAPACITY` | `2` | 同時處理的 pipeline 數量，非 LSF job 總數上限 |
 
 目前使用以下標準 CLI 行為，公司的 wrapper 也必須提供相容輸出：
@@ -184,4 +186,21 @@ LSF Debug build 正常執行所有 steps，成功、失敗或取消後保留整�
 
 一般 Restart 或 webhook build 維持原本清理行為；一般 Restart 不繼承前一次 build 的 Debug 標記。此功能適用於內建 LSF engine。
 
-保留目錄目前需由管理員在確認工作結束且完成除錯後手動清理；刪除 Drone build 歷史不會刪除這些檔案。目錄可能包含 secrets、clone 憑證與執行腳本，應維持原有受限權限，不要當作公開 artifact。LSF 的 `.out`／`.err` 仍可能是空檔，因為 commands 輸出由另一份 log 收集到 Drone。
+Debug 目錄預設在整個 pipeline 收尾、所有已提交的 LSF jobs 都確認結束後保留 **7 天**。server 啟動時及之後每小時掃描一次，清除到期目錄；實際刪除時間取決於下一次掃描，server 停機期間不會執行清理。一般 build 的清理方式不變。
+
+每個符合清理條件的 Debug 目錄會以受限權限、原子寫入方式建立 `.drone-lsf-retention.json`，記錄版本、保留原因、目錄名稱、repository/build/stage ID、UTC 完成時間與到期時間。每條 pipeline（stage）分別起算，並非整個多 pipeline build 共用一個到期時間；不使用目錄 mtime 判斷。server 重啟後仍依檔案中的到期時間回收，修改設定只影響之後完成的 pipeline。
+
+每個 step 的 Debug log 會顯示路徑、保留期限與 metadata 檔名。精確到期時間必須等整條 pipeline 收尾才知道，屆時寫入 metadata 與 server log。server log 也記錄刪除成功、失敗及需人工檢查的目錄。
+
+執行中、無法確認 job 終止、`bsub` 提交結果不明、缺少或損壞完成紀錄（包括升級前的舊目錄）的工作目錄均不會自動刪除，需管理員核對 LSF 狀態後處理。server 異常中斷而未寫入完成紀錄的目錄也會保留。清理只檢查 workspace 直屬的 `pipeline-*` 目錄，不追蹤 pipeline 或 metadata 的符號連結；目錄內的符號連結只移除連結本身。清理失敗會記錄錯誤，保留完成紀錄以供後續重試。
+
+可在啟動 server 前用 tcsh 設定，例如保留 3 天、每 30 分鐘檢查：
+
+```tcsh
+setenv DRONE_LSF_DEBUG_RETENTION 72h
+setenv DRONE_LSF_DEBUG_CLEANUP_INTERVAL 30m
+```
+
+時間使用 Go duration 格式（例如 `168h`、`30m`，不支援 `7d`）；兩者需為正值，`0` 採用預設值，負值拒絕啟動。更新設定後需重啟 server。刪除 Drone build 歷史不會立即刪除保留的檔案。
+
+目錄可能包含 secrets、clone 憑證與執行腳本，應維持原有受限權限，不要當作公開 artifact。LSF 的 `.out`／`.err` 仍可能是空檔，因為 commands 輸出由另一份 log 收集到 Drone。
