@@ -1,0 +1,48 @@
+# Native LSF detached-service example. Copy to .drone.yml in a trusted repo.
+# The queue must have capacity for the service AND the consumer at the same time.
+kind: pipeline
+type: lsf
+name: detached-service
+
+clone:
+  disable: true
+
+environment:
+  SHELL_TYPE: tcsh
+  BSUB_OPTION: "-n 1"
+  SERVICE_WAIT_SECONDS: "300"
+
+steps:
+- name: service
+  image: none
+  detach: true
+  commands:
+  - mkdir -p detached-test
+  - echo "service starting on LSF job $$LSB_JOBID"
+  # In a real service, publish readiness only after initialization completes.
+  - sleep 3
+  - touch detached-test/ready
+  - |
+    while ( 1 )
+      echo "service heartbeat: job=$$LSB_JOBID"
+      sleep 5
+    end
+
+- name: consumer
+  image: none
+  depends_on: [service]
+  commands:
+  # depends_on waits for submission, not RUN state or application readiness.
+  - |
+    @ waited = 0
+    while ( ! -f detached-test/ready )
+      if ( $$waited >= $$SERVICE_WAIT_SECONDS ) then
+        echo "service readiness timed out" > /dev/stderr
+        exit 1
+      endif
+      sleep 1
+      @ waited ++
+    end
+  - echo "service is ready; consumer running"
+  - sleep 15
+  - echo "consumer finished; pipeline teardown will stop the service"

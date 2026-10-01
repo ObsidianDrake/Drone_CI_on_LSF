@@ -16,10 +16,10 @@ import (
 	"time"
 
 	"github.com/drone/drone-runtime/engine"
-	"github.com/drone/drone-runtime/runtime"
 	"github.com/drone/drone-yaml/yaml"
 	"github.com/drone/drone-yaml/yaml/compiler"
 	"github.com/drone/drone-yaml/yaml/compiler/transform"
+	"github.com/drone/drone/internal/pipelineruntime"
 )
 
 func testEngine(t *testing.T) *Engine {
@@ -319,7 +319,7 @@ steps:
 }
 
 func TestLintRejectsContainerAndUnsafePaths(t *testing.T) {
-	for _, settings := range []string{"image: alpine", "working_dir: ../escape", "detach: true", "shell: fish", "resources: {limits: {cpu: 1}}"} {
+	for _, settings := range []string{"image: alpine", "working_dir: ../escape", "shell: fish", "resources: {limits: {cpu: 1}}"} {
 		t.Run(settings, func(t *testing.T) {
 			m, err := yaml.ParseString("kind: pipeline\ntype: lsf\nsteps:\n- name: test\n  commands: [echo ok]\n  " + settings + "\n")
 			if err != nil {

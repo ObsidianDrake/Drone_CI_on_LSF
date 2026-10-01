@@ -82,14 +82,14 @@ func Lint(p *yaml.Pipeline, trusted bool) error {
 	copyPipeline := *p
 	copyPipeline.Steps = nil
 	for _, s := range p.Steps {
-		if (s.Image != "" && s.Image != "none" && s.Image != "git") || s.Build != nil || s.Push != nil || s.Detach || s.Privileged ||
+		if (s.Image != "" && s.Image != "none" && s.Image != "git") || s.Build != nil || s.Push != nil || s.Privileged ||
 			len(s.Volumes)+len(s.Devices)+len(s.Ports)+len(s.DNS)+len(s.DNSSearch)+len(s.ExtraHosts)+len(s.Settings)+len(s.Entrypoint)+len(s.Command) != 0 ||
 			s.Network != "" || s.User != "" || s.Pull != "" || s.Resources != nil {
 			return fmt.Errorf("lsf: step %q uses unsupported container settings; use commands and runner LSF resource settings", s.Name)
 		}
 		if s.Image == "git" {
-			if s.Name != "clone" || len(s.Commands) != 0 || s.WorkingDir != "" {
-				return fmt.Errorf("lsf: image git is reserved for a clone step without commands or working_dir")
+			if s.Detach || s.Name != "clone" || len(s.Commands) != 0 || s.WorkingDir != "" {
+				return fmt.Errorf("lsf: image git is reserved for a non-detached clone step without commands or working_dir")
 			}
 		} else if len(s.Commands) == 0 {
 			return fmt.Errorf("lsf: step %q requires commands", s.Name)

@@ -60,26 +60,13 @@ type job struct {
 	state                 engine.State // published by closing done
 	err                   error
 	confirmed             bool // scheduler confirmed the job is terminal
+	stoppedByRunner       bool
+	finished              time.Time
 }
 
 var _ engine.Engine = (*Engine)(nil)
 var jobIDPattern = regexp.MustCompile(`Job\s+<([1-9][0-9]*)>`)
 var envPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-
-// WithContext binds cancellation to engine Setup while allowing the legacy
-// runtime to finish its log and lifecycle callbacks before Run returns.
-func WithContext(backend engine.Engine, ctx context.Context) engine.Engine {
-	return &contextEngine{Engine: backend, ctx: ctx}
-}
-
-type contextEngine struct {
-	engine.Engine
-	ctx context.Context
-}
-
-func (e *contextEngine) Setup(_ context.Context, spec *engine.Spec) error {
-	return e.Engine.Setup(e.ctx, spec)
-}
 
 func New(config Config) (*Engine, error) {
 	if config.Bsub == "" {
@@ -438,7 +425,10 @@ func (e *Engine) status(ctx context.Context, id string) (engine.State, bool, err
 }
 
 func (e *Engine) monitor(p *pipeline, j *job) {
-	defer close(j.done)
+	defer func() {
+		j.finished = time.Now()
+		close(j.done)
+	}()
 	defer func() {
 		if j.confirmed && e.TrackJob != nil && p.repoID > 0 {
 			e.TrackJob(0, j.id, "")
@@ -480,6 +470,15 @@ func (e *Engine) monitor(p *pipeline, j *job) {
 	defer cancel()
 	var killErr error
 	for ctx.Err() == nil {
+		// A service may have exited just before shutdown. Observe its result
+		// before requesting a kill so a natural failure is not called cleanup.
+		if state, done, _ := e.status(ctx, j.id); done {
+			j.state, j.confirmed = state, true
+			return
+		}
+		if p.ctx.Err() != nil {
+			j.stoppedByRunner = true
+		}
 		_, killErr = e.command(ctx, e.config.Bkill, j.id)
 		state, done, _ := e.status(ctx, j.id)
 		if done {

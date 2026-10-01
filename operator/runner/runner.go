@@ -26,13 +26,13 @@ import (
 	"time"
 
 	"github.com/drone/drone-runtime/engine"
-	"github.com/drone/drone-runtime/runtime"
 	"github.com/drone/drone-yaml/yaml"
 	"github.com/drone/drone-yaml/yaml/compiler"
 	"github.com/drone/drone-yaml/yaml/compiler/transform"
 	"github.com/drone/drone-yaml/yaml/converter"
 	"github.com/drone/drone-yaml/yaml/linter"
 	"github.com/drone/drone/core"
+	"github.com/drone/drone/internal/pipelineruntime"
 	"github.com/drone/drone/operator/manager"
 	"github.com/drone/drone/operator/runner/lsf"
 	"github.com/drone/drone/plugin/registry"
@@ -386,6 +386,7 @@ func (r *Runner) Run(ctx context.Context, id int64) error {
 			Status:    core.StatusPending,
 			ErrIgnore: s.IgnoreErr,
 			DependsOn: append([]string(nil), s.DependsOn...),
+			Detached:  s.Detach,
 		}
 		steps[dst.Name] = dst
 		m.Stage.Steps = append(m.Stage.Steps, dst)
@@ -516,10 +517,12 @@ func (r *Runner) Run(ctx context.Context, id int64) error {
 		},
 	}
 
+	var lsfLifecycle *lsf.LifecycleEngine
 	runtimeEngine := r.Engine
 	runtimeCtx := timeout
 	if r.Type == "lsf" {
-		runtimeEngine = lsf.WithContext(r.Engine, timeout)
+		lsfLifecycle = lsf.WithContext(r.Engine, timeout)
+		runtimeEngine = lsfLifecycle
 		// The legacy serial runtime otherwise returns before its step goroutine
 		// finishes, racing log uploads and final stage updates on cancellation.
 		runtimeCtx = context.Background()
@@ -543,6 +546,36 @@ func (r *Runner) Run(ctx context.Context, id int64) error {
 	logger.Infoln("runner: start execution")
 
 	err = runner.Run(runtimeCtx)
+	if lsfLifecycle != nil {
+		for source, result := range lsfLifecycle.DetachedResults {
+			step := steps[source.Metadata.Name]
+			if step == nil || step.Status != core.StatusRunning {
+				continue
+			}
+			step.Stopped = result.Finished.Unix()
+			step.ExitCode = result.State.ExitCode
+			step.Status = core.StatusPassing
+			switch {
+			case !result.Confirmed:
+				step.Status = core.StatusError
+				step.Error = fmt.Sprint(result.Err)
+			case result.StoppedByRunner && timeout.Err() != nil:
+				step.Status = core.StatusKilled
+			case result.StoppedByRunner:
+				// Expected service shutdown does not fail a detached step.
+			case result.Err != nil && !errors.Is(result.Err, context.Canceled) && !errors.Is(result.Err, context.DeadlineExceeded):
+				step.Status = core.StatusError
+				step.Error = result.Err.Error()
+			case result.State.ExitCode != 0:
+				step.Status = core.StatusFailing
+			}
+		}
+		if lsfLifecycle.CleanupErr != nil {
+			logger.WithError(lsfLifecycle.CleanupErr).Error("runner: LSF cleanup incomplete")
+			m.Stage.Error = lsfLifecycle.CleanupErr.Error()
+			err = errors.Join(err, lsfLifecycle.CleanupErr)
+		}
+	}
 	if r.Type == "lsf" && timeout.Err() != nil {
 		// Runtime step calls use background contexts; the LSF engine still
 		// cancels jobs through the context saved in Setup.

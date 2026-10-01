@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/drone/drone-runtime/engine"
-	"github.com/drone/drone-runtime/runtime"
 	"github.com/drone/drone/core"
+	"github.com/drone/drone/internal/pipelineruntime"
 	"github.com/google/go-cmp/cmp"
 )
 

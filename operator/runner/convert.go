@@ -18,8 +18,8 @@ import (
 	"strings"
 
 	"github.com/drone/drone-runtime/engine"
-	"github.com/drone/drone-runtime/runtime"
 	"github.com/drone/drone/core"
+	"github.com/drone/drone/internal/pipelineruntime"
 )
 
 func convertVolumes(from []string) map[string]string {

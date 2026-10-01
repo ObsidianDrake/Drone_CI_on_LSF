@@ -146,7 +146,7 @@ step 的 `HOME` 使用獨立目錄，clone 的 netrc 不會覆蓋服務帳號的
 
 - 支援 `commands`、`environment`（含 `from_secret`）、`when`、`depends_on`、`failure: ignore`；`working_dir` 可指定 workspace 內已存在的相對子目錄。
 - 自動 clone 使用 `git init`、fetch 並 checkout build commit SHA，支援 `clone.depth`、`clone.skip_verify` 與 Drone 提供的 HTTP netrc；尚未涵蓋 clone plugin 的 submodule、Git LFS 或 pull request 自動 merge 行為。
-- `image` 僅支援省略、`none` 或 clone 專用的 `git`；不支援其他容器 image、容器 plugin settings、services、detach、volumes、privileged、Docker network、container user、每個 step 的 Docker resources 或自訂 workspace 路徑。設定這些欄位會報錯，避免誤以為容器功能已生效。資源需求透過 `BSUB_OPTION` 或 runner 層級的預設設定提供。
+- `image` 僅支援省略、`none` 或 clone 專用的 `git`；不支援其他容器 image、容器 plugin settings、services、volumes、privileged、Docker network、container user、每個 step 的 Docker resources 或自訂 workspace 路徑。設定這些欄位會報錯，避免誤以為容器功能已生效。資源需求透過 `BSUB_OPTION` 或 runner 層級的預設設定提供。
 - 沒有 LSF job arrays、互動工作或依賴 LSF 自己排 step 的功能；step 相依性由 Drone runtime 管理。
 - 已以本機 mock 驗證，尚未連線公司 LSF 叢集驗證 wrapper、共享檔案系統與權限配置。
 
@@ -179,6 +179,18 @@ Drone 管理員可在 **Settings → General → Project Settings** 切換 **Sho
 
 API 欄位為 `lsf_job_info_disabled`（`false` 表示顯示、`true` 表示隱藏）。非 Drone 管理員變更此欄位會收到 HTTP 403；其他設定儲存時帶入相同值不受影響。第一次啟動新版 server 時會自動新增資料庫欄位；附有 SQLite、MySQL 與 PostgreSQL migration，資料庫儲存測試以 SQLite 執行。
 
+
+## Detached 背景服務
+
+LSF step 支援 `detach: true`，完整可執行範例見 [detach.drone.yml](../examples/lsf/detach.drone.yml)。原生 `image: git` clone 不允許 detach。
+
+- 取得 `bsub` 回傳的 job ID 並建立日誌串流後，即放行後續 steps，不等待該 job 結束。`depends_on: [service]` 在這裡表示等待服務提交；job 仍可能是 `PEND`，不保證已進入 `RUN` 或應用程式已就緒。
+- 後續 step 應自行以具逾時的檢查等待 ready 檔、HTTP health check 或其他就緒條件。LSF jobs 可能位於不同 hosts；使用網路服務時須傳遞實際 host/port，不能假設 `localhost`。背景服務持續佔用 slot，queue 必須容納服務與消費者同時執行。
+- pipeline 成功、失敗、取消或逾時收尾時，對尚未結束的 job 呼叫 `bkill`，並確認終止。仍在 `PEND` 的 job 也會取消。只有 detached steps 的 pipeline 會立即進入收尾，不會讓服務獨立存活。
+- 背景服務自然結束的非零 exit code 不會單獨使 pipeline 失敗；其最終 step 狀態與 exit code 仍會記錄。提交失敗仍會使 pipeline 失敗。若服務失效應使測試失敗，消費者必須檢查服務是否可用。
+- 正常收尾自動終止的 detached step 標為完成，保留 LSF 實際 exit code（例如 137）；取消／逾時終止則標為 killed。終態在 pipeline 收尾時更新，job 提前退出期間 step 可能仍顯示 running。
+- 收尾會等待 detached 日誌排空及上傳，再完成 build；啟用「Show LSF job information」時也會包含 `scheduler.out` 區塊。若無法確認 job 終止，回報清理錯誤、保留 workdir，且不建立可自動到期刪除的完成紀錄。
+- Debug 同樣會停止背景 job，只保留 workdir；保留期限沿用 Debug retention 設定。server 異常中斷仍需人工核對 LSF jobs，不提供跨重啟的自動恢復追蹤。
 
 ## 管理員 Debug 與工作目錄保留
 

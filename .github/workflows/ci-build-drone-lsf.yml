@@ -47,7 +47,7 @@ jobs:
               dnf install -y gcc glibc-devel binutils file git ca-certificates
               git config --global --add safe.directory /src
               bash scripts/build-rhel8.sh
-              go test -mod=readonly ./store/repos ./operator/runner ./cmd/drone-server
+              go test -mod=readonly ./store/repos ./internal/pipelineruntime ./operator/runner ./cmd/drone-server
             '
 
       # UBI's public repositories do not provide tcsh. Run the LSF integration
@@ -56,7 +56,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y tcsh
-          go test -mod=readonly ./operator/runner/lsf
+          go test -mod=readonly -race ./internal/pipelineruntime ./operator/runner/lsf ./operator/runner
 
       - name: Package binary
         working-directory: dist
