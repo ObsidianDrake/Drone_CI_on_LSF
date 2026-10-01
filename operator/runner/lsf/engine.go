@@ -245,6 +245,11 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 	if shell == "" {
 		shell = e.config.Shell
 	}
+	// The generated clone script handles expected fetch failures itself and
+	// uses POSIX syntax. SHELL_TYPE continues to control user command steps.
+	if nativeClone {
+		shell = "/bin/sh"
+	}
 	command, err := shellArgs(shell)
 	if err != nil {
 		return err

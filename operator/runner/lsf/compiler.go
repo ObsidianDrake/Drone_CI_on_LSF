@@ -149,16 +149,7 @@ func Compile(c *compiler.Compiler, p *yaml.Pipeline) *engine.Spec {
 		}
 		nativeClone := (step.Metadata.Name == "clone" && !p.Clone.Disable) || (source != nil && source.Image == "git")
 		if nativeClone {
-			depth := ""
-			if p.Clone.Depth > 0 {
-				depth = fmt.Sprintf(" --depth=%d", p.Clone.Depth)
-			}
-			script = commandScript([]string{
-				"git init .",
-				"git remote add origin \"$DRONE_REMOTE_URL\"",
-				"git fetch --no-tags" + depth + " origin \"$DRONE_COMMIT_SHA\"",
-				"git -c advice.detachedHead=false checkout --force --detach \"$DRONE_COMMIT_SHA\"",
-			})
+			script = nativeCloneScript(p.Clone.Depth)
 			if p.Clone.SkipVerify {
 				step.Envs["GIT_SSL_NO_VERIFY"] = "true"
 			}

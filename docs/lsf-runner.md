@@ -101,6 +101,22 @@ steps:
 
 `image: git` 是原生 clone 標記，限用於名為 `clone`、沒有自訂 commands 的 step；會 fetch 並 checkout webhook 指定的 commit SHA。`clone.disable: true` 只停用自動 clone，仍執行明確列出的 clone step。`image: none` 在共享 workspace 執行 commands，不啟動容器。
 
+### 混合 RHEL7 / RHEL8 節點的 clone
+
+自動 clone 與 `image: git` 共用相容流程，不要求固定 RHEL8 節點：
+
+1. 印出 hostname、OS、Git 執行檔路徑、版本與預期 commit SHA。
+2. 優先 `git fetch --no-tags [--depth=N] origin "$DRONE_COMMIT_SHA"`。
+3. 若失敗，保留 Git 原始錯誤並記錄 exit code，再以完整的 `DRONE_COMMIT_REF`（branch、tag 或遠端提供的 PR ref）fetch 一次。此路徑支援 Git 1.8.3.1 的 HTTP fetch。
+4. 若指定 SHA 仍不在本地、且 repository 是設定 depth 後的 shallow repository，對同一 ref 執行一次 `--unshallow`，取得完整歷史；log 會提示可能增加下載量。
+5. 驗證指定 SHA 是 commit，detached checkout 該 SHA，再確認 `HEAD` 完全一致。絕不以最新 branch tip 或 `FETCH_HEAD` 取代預期 SHA。
+
+Ref fallback 必須有合法的完整 `DRONE_COMMIT_REF`；不會猜測 `master`、`main` 或 PR 的 target branch。若 ref 被刪除、force-push 後原 commit 無法取得、認證失敗或遠端無法提供物件，clone 會失敗並停止後續 steps。沒有無限重試，也不會預先抓取所有 branches / tags。SHA fetch 的原始錯誤即使後續 fallback 成功仍會保留；最終成功以 `Verified HEAD` 及 step exit code 為準。
+
+程式產生的原生 clone 腳本固定由 `/bin/sh` 執行，以明確處理 fetch 失敗；`SHELL_TYPE` / `DRONE_LSF_SHELL` 繼續控制使用者的 commands steps。既有 netrc、SSL verify 與 LSF resource 設定照常生效。
+
+CI 使用實際的新版 Git 與 upstream Git 1.8.3.1，透過 smart HTTP 測試 branch、分支前進、shallow history、annotated tag、PR ref、缺少 commit / ref 與拒絕存取；LSF 生命週期使用 mock 驗證。舊版 Git 僅安裝於 CI 暫存目錄，不隨 server 發布，也不取代系統 Git。公司 RHEL 套件的 backport 與 Gitea 設定仍需於實際環境驗證。
+
 頂層 environment 作為各 step 的預設值；step environment 可覆寫，支援 YAML anchor 與 `from_secret`。`BSUB_OPTION` 會依引號拆成參數直接傳給 bsub，例如：
 
 ```yaml
