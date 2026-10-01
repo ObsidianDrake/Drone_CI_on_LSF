@@ -115,6 +115,8 @@ Ref fallback 必須有合法的完整 `DRONE_COMMIT_REF`；不會猜測 `master`
 
 程式產生的原生 clone 腳本固定由 `/bin/sh` 執行，以明確處理 fetch 失敗；`SHELL_TYPE` / `DRONE_LSF_SHELL` 繼續控制使用者的 commands steps。既有 netrc、SSL verify 與 LSF resource 設定照常生效。
 
+Clone 在執行主要 Git 指令前，以與一般 steps 相同的綠色 `+ command` 顯示指令；fallback 與 `--unshallow` 只在實際執行時顯示。指令中的 URL、SHA、ref 使用原本的環境變數名稱呈現，避免 trace 展開 URL 中可能存在的認證資訊；`[clone]` 診斷與結果仍保留。
+
 CI 使用實際的新版 Git 與 upstream Git 1.8.3.1，透過 smart HTTP 測試 branch、分支前進、shallow history、annotated tag、PR ref、缺少 commit / ref 與拒絕存取；LSF 生命週期使用 mock 驗證。舊版 Git 僅安裝於 CI 暫存目錄，不隨 server 發布，也不取代系統 Git。公司 RHEL 套件的 backport 與 Gitea 設定仍需於實際環境驗證。
 
 頂層 environment 作為各 step 的預設值；step environment 可覆寫，支援 YAML anchor 與 `from_secret`。`BSUB_OPTION` 會依引號拆成參數直接傳給 bsub，例如：
