@@ -51,8 +51,19 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 	if _, err := os.Stat(backend); err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(&cgi.Handler{Path: backend, Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1"}})
+	handler := &cgi.Handler{Path: backend, Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1"}}
+	server := httptest.NewServer(handler)
 	defer server.Close()
+	authenticated := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user, password, ok := r.BasicAuth()
+		if !ok || user != "ci-user" || password != "ci-password" {
+			w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	defer authenticated.Close()
 	denied := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Forbidden", http.StatusForbidden)
 	}))
@@ -74,9 +85,9 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 				}
 			}
 			for _, tc := range []struct {
-				name, sha, ref string
-				depth          int
-				fail, deny     bool
+				name, sha, ref   string
+				depth            int
+				fail, deny, auth bool
 			}{
 				{name: "branch-tip", sha: tip, ref: "refs/heads/main"},
 				{name: "branch-advanced", sha: first, ref: "refs/heads/main"},
@@ -84,6 +95,7 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 				{name: "shallow-advanced", sha: first, ref: "refs/heads/main", depth: 1},
 				{name: "annotated-tag", sha: first, ref: "refs/tags/v1", depth: 1},
 				{name: "pull-ref", sha: tip, ref: "refs/pull/7/head", depth: 1},
+				{name: "authenticated-shallow-advanced", sha: first, ref: "refs/heads/main", depth: 1, auth: true},
 				{name: "unavailable-commit", sha: strings.Repeat("f", 40), ref: "refs/heads/main", depth: 1, fail: true},
 				{name: "deleted-ref", sha: strings.Repeat("f", 40), ref: "refs/heads/deleted", fail: true},
 				{name: "missing-ref", sha: strings.Repeat("f", 40), fail: true},
@@ -102,6 +114,9 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 					if tc.deny {
 						remote = denied.URL + "/repo.git"
 					}
+					if tc.auth {
+						remote = authenticated.URL + "/repo.git"
+					}
 					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 					defer cancel()
 					cmd := exec.CommandContext(ctx, "/bin/sh", "-e", script)
@@ -109,6 +124,19 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 					cmd.Env = []string{"HOME=" + home, "PATH=" + filepath.Dir(clientPath) + ":/usr/bin:/bin", "LC_ALL=C",
 						"GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "DRONE_REMOTE_URL=" + remote,
 						"DRONE_COMMIT_SHA=" + tc.sha, "DRONE_COMMIT_REF=" + tc.ref}
+					accountNetrc := "machine 127.0.0.1 login personal password do-not-change\n"
+					if tc.auth {
+						privateHome := t.TempDir()
+						for path, data := range map[string]string{
+							filepath.Join(home, ".netrc"):        accountNetrc,
+							filepath.Join(privateHome, ".netrc"): "machine 127.0.0.1 login ci-user password ci-password\n",
+						} {
+							if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+								t.Fatal(err)
+							}
+						}
+						cmd.Env = append(cmd.Env, "DRONE_LSF_CLONE_NETRC_HOME="+privateHome)
+					}
 					out, err := cmd.CombinedOutput()
 					if ctx.Err() != nil || (err != nil) != tc.fail {
 						t.Fatalf("unexpected result: %v (context %v)\n%s", err, ctx.Err(), out)
@@ -127,11 +155,16 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 					if !strings.Contains(string(out), "[clone] Verified HEAD: "+tc.sha) {
 						t.Fatalf("missing commit verification\n%s", out)
 					}
+					if tc.auth {
+						if data, err := os.ReadFile(filepath.Join(home, ".netrc")); err != nil || string(data) != accountNetrc {
+							t.Fatalf("account netrc changed: %v", err)
+						}
+					}
 					if client.name == "1.8.3.1" {
 						if !strings.Contains(string(out), "no such remote ref "+tc.sha) || !strings.Contains(string(out), "Ref fetch succeeded") {
 							t.Fatalf("legacy HTTP clone did not exercise ref fallback\n%s", out)
 						}
-						if tc.name == "shallow-advanced" && !strings.Contains(string(out), "Full-history fetch succeeded") {
+						if strings.HasSuffix(tc.name, "shallow-advanced") && !strings.Contains(string(out), "Full-history fetch succeeded") {
 							t.Fatalf("did not expand shallow history\n%s", out)
 						}
 					}

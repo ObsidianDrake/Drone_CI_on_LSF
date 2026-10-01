@@ -152,13 +152,23 @@ BSUB_OPTION: >-
 
 目前使用以下標準 CLI 行為，公司的 wrapper 也必須提供相容輸出：
 
-- `bsub -J ... -cwd ... -oo ... -eo ... -n ... -env none [-q ...] [-R ...] /bin/sh <wrapper>`：解析回應中的 `Job <數字>`。
+- `bsub -J ... -cwd ... -oo ... -eo ... -n ... -env all [-q ...] [-R ...] /bin/sh <wrapper>`：繼承提交環境，解析回應中的 `Job <數字>`。
 - `bjobs -a -noheader -o 'stat exit_code' <ID>`：`DONE` 對應成功，`EXIT` 回報退出碼；缺少有效退出碼時視為 `1`。等待、執行與暫停狀態持續輪詢。
 - `bkill <ID>`：取消或 pipeline 逾時時呼叫，之後持續確認終止。查詢連續失敗三次也會進入取消收尾，避免失聯工作持續執行。
 
 輸出直接寫入共享目錄並串流到 Drone；不依賴 LSF 最後才回傳的 spool log。LSF 自己的啟動診斷位於 step 目錄的 `scheduler.out` / `scheduler.err`。正常收尾會清除工作目錄。若 `bsub` 回應不明或無法確認 job 終止，會保留目錄並記錄錯誤，需依 server log 中的 job ID 或保留目錄名稱人工核對 LSF 狀態；server 重啟後尚無自動恢復 job 追蹤。
 
-step 的 `HOME` 使用獨立目錄，clone 的 netrc 不會覆蓋服務帳號的 `~/.netrc`。環境只注入 pipeline / runner 的設定、Drone metadata、所需 secrets 與必要 LSF job 變數；沒有將 server 的完整環境直接交給命令。公司工具的 PATH 可透過 `DRONE_RUNNER_ENVIRON` 或 step environment 指定。
+### Step 環境與巢狀 bsub
+
+Runner 使用 `bsub -env all`，讓 LSF 傳遞啟動 server / 提交 bsub 的環境；wrapper 不再使用 `env -i` 清空環境，也不強制替換 `HOME` 或 `PATH`。因此 `LSF_ENVDIR`、LSF client 設定、library / license 路徑與公司自訂的環境變數，不必逐一填入每個 user 的 `.drone.yml`。繼承範圍包括 server process 的環境變數，pipeline 仍限 Trusted repositories。
+
+以 LSF 在執行節點提供的環境為基礎，再套用 Drone metadata、pipeline / step environment、Runner 全域 environment 與 secrets。同名的明確設定會覆寫繼承值；現有 `DRONE_RUNNER_ENVIRON` 的優先序高於 YAML 同名設定。`LSB_JOBID`、`LSB_JOBNAME`、`LSB_QUEUE`、`LSB_DJOB_NUMPROC` 保留目前執行 job 的值，不會套用 YAML 偽造的 job 資訊。`HOME`、`USER` 與其他 LSF job 變數仍遵循 LSF 的主機端處理規則，不強行複製提交端的 job 身分。
+
+請先在具有正確公司 LSF / tool 環境的 shell 啟動 server；若使用服務管理器，則在該服務的啟動設定載入同樣環境。修改登入 shell 不會改變已執行中的 server，需要重啟。繼承的是環境變數，不包含 tcsh aliases 或未 export 的 shell 變數；commands shell 仍使用前述非 login 模式。先前為了補 `LSF_ENVDIR` 而加到 `DRONE_RUNNER_ENVIRON` 的項目可以移除，或保留作為刻意的全域覆寫；其他既有項目不必刪除。
+
+一般 commands 使用帳號原本的 `HOME`、Git config 與認證。原生 clone 有 Drone HTTP 認證時，只有該 clone 的 Git subprocess 使用暫存 HOME / netrc，確保 Git 1.8.3.1 相容且不覆蓋帳號的 `~/.netrc`；step 本身的 HOME 不變。沒有 CI 認證時，clone Git 也使用繼承的 HOME。
+
+Step 可直接提交巢狀 job，例如 `bsub -q test.q sleep 10`。若 step 需要等待子 job 完成並採用其 exit code，可用 `bsub -K -q test.q sleep 10`；普通 `bsub` 提交成功就返回。這次環境繼承不包含子 job 自動追蹤或清除，Runner 的取消 / detach 收尾仍只管理它直接提交的 step jobs。
 
 ## 初版範圍
 

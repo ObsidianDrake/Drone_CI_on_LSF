@@ -12,13 +12,24 @@ trace() {
     printf '\033[32m+ %s\033[0;37m\n' "$1"
 }
 
+# Preserve the step's inherited HOME. Only native clone Git subprocesses use
+# the private CI netrc; never overwrite the account's ~/.netrc or Git config.
+clone_git=$(command -v git)
+git() {
+    if [ -n "${DRONE_LSF_CLONE_NETRC_HOME:-}" ]; then
+        HOME=$DRONE_LSF_CLONE_NETRC_HOME "$clone_git" "$@"
+    else
+        "$clone_git" "$@"
+    fi
+}
+
 printf '[clone] Host: %s\n' "$(hostname)"
 if [ -r /etc/redhat-release ]; then
     cat /etc/redhat-release
 elif [ -r /etc/os-release ]; then
     cat /etc/os-release
 fi
-printf '[clone] Git executable: %s\n' "$(command -v git)"
+printf '[clone] Git executable: %s\n' "$clone_git"
 trace 'git --version'
 git --version
 

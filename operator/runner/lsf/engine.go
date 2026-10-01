@@ -205,10 +205,6 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 		return err
 	}
 	j := &job{dir: dir, log: filepath.Join(dir, "output.log"), wrapper: filepath.Join(dir, "run.sh"), done: make(chan struct{})}
-	home := filepath.Join(dir, "home")
-	if err := os.Mkdir(home, 0700); err != nil {
-		return err
-	}
 	if err := os.WriteFile(filepath.Join(dir, "commands.script"), script, 0600); err != nil {
 		return err
 	}
@@ -219,7 +215,9 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 	if err := os.WriteFile(j.log, initialLog, 0600); err != nil {
 		return err
 	}
-	env := map[string]string{"PATH": os.Getenv("PATH"), "HOME": home}
+	// Overlay pipeline settings on the environment supplied by LSF at job
+	// execution time. Do not replace the execution host's PATH or HOME.
+	env := make(map[string]string)
 	for key, value := range step.Envs {
 		env[key] = value
 	}
@@ -236,7 +234,6 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 			return fmt.Errorf("lsf: missing secret %q", ref.Name)
 		}
 	}
-	// Never write credentials to the account's real home directory.
 	j.options, err = splitOptions(env["BSUB_OPTION"])
 	if err != nil {
 		return err
@@ -254,19 +251,26 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 	if err != nil {
 		return err
 	}
-	env["HOME"] = home
 	for _, prefix := range []string{"DRONE", "CI"} {
 		env[prefix+"_WORKSPACE"] = p.workspace
 		env[prefix+"_WORKSPACE_BASE"] = p.workspace
 		env[prefix+"_WORKSPACE_PATH"] = ""
 	}
-	if env["CI_NETRC_USERNAME"] != "" && env["CI_NETRC_PASSWORD"] != "" {
+	// Only native clone Git processes need the CI netrc. Ordinary commands
+	// retain the account HOME, including its Git and LSF configuration.
+	delete(env, "DRONE_LSF_CLONE_NETRC_HOME")
+	if nativeClone && env["CI_NETRC_USERNAME"] != "" && env["CI_NETRC_PASSWORD"] != "" {
+		home := filepath.Join(dir, "home")
+		if err := os.Mkdir(home, 0700); err != nil {
+			return err
+		}
 		// Keep ordinary tokens unquoted for older Git/libcurl netrc readers.
 		// Quote special characters to prevent additional entries.
 		netrc := fmt.Sprintf("machine %s login %s password %s\n", netrcToken(env["CI_NETRC_MACHINE"]), netrcToken(env["CI_NETRC_USERNAME"]), netrcToken(env["CI_NETRC_PASSWORD"]))
 		if err := os.WriteFile(filepath.Join(home, ".netrc"), []byte(netrc), 0600); err != nil {
 			return err
 		}
+		env["DRONE_LSF_CLONE_NETRC_HOME"] = home
 	}
 	for _, prefix := range []string{"CI", "DRONE"} {
 		delete(env, prefix+"_NETRC_USERNAME")
@@ -290,7 +294,9 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 	wrapper.WriteString("/usr/bin/mkfifo " + stderrPipe + " || exit 125\n")
 	wrapper.WriteString("(" + stderrReader(nativeClone) + ") < " + stderrPipe + " &\n")
 	wrapper.WriteString("stderr_reader=$!\n")
-	wrapper.WriteString("/usr/bin/env -i")
+	// This is runner-owned state, never inherited from a parent build.
+	wrapper.WriteString("unset DRONE_LSF_CLONE_NETRC_HOME\n")
+	wrapper.WriteString("/usr/bin/env")
 	for _, key := range keys {
 		wrapper.WriteString(" " + quote(key+"="+env[key]))
 	}
@@ -355,7 +361,7 @@ func (e *Engine) Start(ctx context.Context, spec *engine.Spec, step *engine.Step
 		return fmt.Errorf("lsf: step already submitted")
 	}
 	args := []string{"-J", "drone-" + filepath.Base(j.dir), "-cwd", p.workspace,
-		"-oo", filepath.Join(j.dir, "scheduler.out"), "-eo", filepath.Join(j.dir, "scheduler.err"), "-env", "none"}
+		"-oo", filepath.Join(j.dir, "scheduler.out"), "-eo", filepath.Join(j.dir, "scheduler.err"), "-env", "all"}
 	has := func(option string) bool {
 		for _, arg := range j.options {
 			if arg == option || strings.HasPrefix(arg, option+"=") {
