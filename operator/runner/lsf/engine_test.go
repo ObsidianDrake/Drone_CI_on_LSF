@@ -447,23 +447,30 @@ steps:
 		spec.Metadata.Labels = map[string]string{}
 	}
 	spec.Metadata.Labels["lsf.drone.io/repo-id"] = "42"
+	spec.Metadata.Labels["io.drone.repo.namespace"] = "PDK"
+	spec.Metadata.Labels["io.drone.repo.name"] = "DRC_QC"
+	spec.Metadata.Labels["io.drone.build.number"] = "5001"
 	type event struct {
 		repo int64
 		id   string
+		name string
 	}
 	events := []event{}
-	e.TrackJob = func(repo int64, id string, name string) { events = append(events, event{repo, id}) }
+	e.TrackJob = func(repo int64, id string, name string) { events = append(events, event{repo, id, name}) }
 	if err := runtime.New(runtime.WithEngine(e), runtime.WithConfig(spec)).Run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if len(events) != 2 || events[0].repo != 42 || events[1].repo != 0 || events[0].id != events[1].id {
 		t.Fatalf("tracking events: %+v", events)
 	}
+	if events[0].name != "PDK_DRC_QC:monitored:work_5001" {
+		t.Fatalf("tracked name: %q", events[0].name)
+	}
 	output, err := e.command(context.Background(), e.config.Bjobs, "-a", "-noheader", "-o", "jobid stat job_name:250", events[0].id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(output), events[0].id+" DONE drone-") {
+	if !strings.Contains(string(output), events[0].id+" DONE "+events[0].name) {
 		t.Fatalf("batch status output: %s", output)
 	}
 }

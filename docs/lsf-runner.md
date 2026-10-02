@@ -265,3 +265,17 @@ API 使用 `PATCH /api/repos/{owner}/{name}`，JSON 為
 也套用相同的 admin／Active／無紀錄條件；兩個欄位不可同時傳送。
 SQL store 將分配編號與建立 build/stages 合併為同一筆交易，
 設定儲存也會重新檢查紀錄與 repository version，避免與 webhook 同時觸發時互相覆寫。
+
+## LSF job name
+
+每個 step 提交時的 `bsub -J` 使用
+`Organization_Repository:PipelineName:StepName_BuildNumber`，例如
+`PDK_DRC_QC:regression:run-qc_5001`。`PipelineName` 對應 pipeline 的 `name`，
+`StepName` 對應 step 的 `name`；clone 與 detach steps 也使用相同格式。
+外層的 `< >` 是格式佔位符，不包含在實際 job name 中。
+
+名稱使用 runner metadata，不受 step environment 同名變數或 secrets 覆寫。
+各名稱中的空白、冒號、方括號等非英數／`_`／`-`／`.` 字元會轉為 `_`。
+為符合 monitor 儲存與查詢欄寬，總長度上限為 250 bytes；過長時縮短各名稱部分，
+附上短雜湊並保留 build number。一般長度的名稱不會附加亂數。
+Runner 及 monitor 仍以 LSF job ID 查詢、追蹤與取消，monitor 保存的名稱與提交名稱一致。

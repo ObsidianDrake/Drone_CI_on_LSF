@@ -360,7 +360,8 @@ func (e *Engine) Start(ctx context.Context, spec *engine.Spec, step *engine.Step
 	if j.id != "" {
 		return fmt.Errorf("lsf: step already submitted")
 	}
-	args := []string{"-J", "drone-" + filepath.Base(j.dir), "-cwd", p.workspace,
+	name := stepJobName(spec, step)
+	args := []string{"-J", name, "-cwd", p.workspace,
 		"-oo", filepath.Join(j.dir, "scheduler.out"), "-eo", filepath.Join(j.dir, "scheduler.err"), "-env", "all"}
 	has := func(option string) bool {
 		for _, arg := range j.options {
@@ -397,9 +398,9 @@ func (e *Engine) Start(ctx context.Context, spec *engine.Spec, step *engine.Step
 	}
 	j.id = string(match[1])
 	if e.TrackJob != nil && p.repoID > 0 {
-		e.TrackJob(p.repoID, j.id, "drone-"+filepath.Base(j.dir))
+		e.TrackJob(p.repoID, j.id, name)
 	}
-	logrus.WithFields(logrus.Fields{"job": j.id, "step": step.Metadata.Name, "workspace": p.workspace}).Info("lsf: submitted job")
+	logrus.WithFields(logrus.Fields{"job": j.id, "job_name": name, "step": step.Metadata.Name, "workspace": p.workspace}).Info("lsf: submitted job")
 
 	go e.monitor(p, j)
 	if err := os.WriteFile(filepath.Join(j.dir, "job.id"), []byte(j.id+"\n"), 0600); err != nil {
