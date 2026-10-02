@@ -337,11 +337,13 @@ func (t *triggerer) Trigger(ctx context.Context, repo *core.Repository, base *co
 		return nil, nil
 	}
 
-	repo, err = t.repos.Increment(ctx, repo)
-	if err != nil {
-		logger = logger.WithError(err)
-		logger.Errorln("trigger: cannot increment build sequence")
-		return nil, err
+	if _, atomic := t.builds.(core.BuildSequenceStore); !atomic {
+		repo, err = t.repos.Increment(ctx, repo)
+		if err != nil {
+			logger = logger.WithError(err)
+			logger.Errorln("trigger: cannot increment build sequence")
+			return nil, err
+		}
 	}
 
 	build := &core.Build{
@@ -440,7 +442,7 @@ func (t *triggerer) Trigger(ctx context.Context, repo *core.Repository, base *co
 		}
 	}
 
-	err = t.builds.Create(ctx, build, stages)
+	err = t.createNumberedBuild(ctx, repo, build, stages)
 	if err != nil {
 		logger = logger.WithError(err)
 		logger.Errorln("trigger: cannot create build")
@@ -525,9 +527,12 @@ func (t *triggerer) createBuildError(ctx context.Context, repo *core.Repository,
 		},
 	)
 
-	repo, err := t.repos.Increment(ctx, repo)
-	if err != nil {
-		return nil, err
+	var err error
+	if _, atomic := t.builds.(core.BuildSequenceStore); !atomic {
+		repo, err = t.repos.Increment(ctx, repo)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	build := &core.Build{
@@ -562,7 +567,7 @@ func (t *triggerer) createBuildError(ctx context.Context, repo *core.Repository,
 		Finished:     time.Now().Unix(),
 	}
 
-	err = t.builds.Create(ctx, build, nil)
+	err = t.createNumberedBuild(ctx, repo, build, nil)
 	if err != nil {
 		logger = logger.WithError(err)
 		logger.Errorln("trigger: cannot create build error")
@@ -642,3 +647,12 @@ func (t *triggerer) createBuildError(ctx context.Context, repo *core.Repository,
 // func skipFork(repo *core.Repository, build *core.Hook) bool {
 // 	return repo.Hooks.Forks == core.HookDisable && build.Fork != repo.Slug
 // }
+
+// SQL stores reserve the number and insert its record together, so an admin
+// cannot reset an empty repository while a trigger holds an unrecorded number.
+func (t *triggerer) createNumberedBuild(ctx context.Context, repo *core.Repository, build *core.Build, stages []*core.Stage) error {
+	if store, ok := t.builds.(core.BuildSequenceStore); ok {
+		return store.CreateNext(ctx, repo, build, stages)
+	}
+	return t.builds.Create(ctx, build, stages)
+}

@@ -193,7 +193,7 @@ func (s Server) Handler() http.Handler {
 			r.Use(acl.InjectRepository(s.Repoz, s.Repos, s.Perms))
 			r.Use(acl.CheckReadAccess())
 
-			r.Get("/", repos.HandleFind())
+			r.Get("/", repos.HandleFind(s.Repos))
 			r.With(
 				acl.CheckAdminAccess(),
 			).Patch("/", repos.HandleUpdate(s.Repos))

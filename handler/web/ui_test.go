@@ -116,7 +116,7 @@ func TestTimeoutSaveValidation(t *testing.T) {
 		t.Fatal("missing Save Changes validation handler")
 	}
 	script := `const save=` + string(match[1]) + `;
- let v, calls=0, errors=0; function w(){calls++} function p(){errors++}
+ let v, a={}, t={}, calls=0, errors=0; function w(){calls++} function p(){errors++}
  for(const input of ["", " ", "abc", "1.5", "0", "-1", "1e2", "2562048", null, undefined]) {
  v={timeout_hours:input};calls=errors=0;save();if(calls!==0||errors!==1)throw new Error("invalid accepted: "+input)
  }
@@ -125,5 +125,52 @@ func TestTimeoutSaveValidation(t *testing.T) {
  }`
 	if output, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, output)
+	}
+}
+
+func TestNextBuildNumberSettingsUI(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node required for UI event validation")
+	}
+	u, err := newUIAssets("/drone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := adaptMain(dist.MustLookup(u.main), "/drone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	save := regexp.MustCompile(`onClick:(function\(\)\{if\(!/\^\[0-9\]\+\$/.*?\}),children:"Save Changes"`).FindSubmatch(data)
+	field := regexp.MustCompile(`Object\(He.jsx\)\(oi.Input,(\{label:"Next Build Number".*?\})\)`).FindSubmatch(data)
+	payload := regexp.MustCompile(`\{timeout:void 0,timeout_hours:Number\(v.timeout_hours\),next_build_number:.*?\}`).Find(data)
+	if len(save) != 2 || len(field) != 2 || payload == nil {
+		t.Fatal("missing build number settings integration")
+	}
+	script := `
+ let a={active:true,counter:5000,next_build_number_editable:true},t={admin:true};
+ let v={timeout_hours:1,next_build_number:5001},calls=0,errors=0;
+ function w(){calls++}function p(){errors++}function rp(x){return x}function y(x){return x}
+ const save=` + string(save[1]) + `;
+ const field=()=> (` + string(field[1]) + `);
+ const payload=()=> (` + string(payload) + `);
+ const input=field();
+ if(input.type!=='number'||input.width!==200||input.className!=='timeout'||input.min!==1||input.disabled)throw new Error('wrong input styling or eligibility');
+ for(const value of ['', ' ', 'abc', '0', '-1', '1.5', '1e2', '2147483648', null, undefined]){
+  v.next_build_number=value;calls=errors=0;save();if(calls!==0||errors!==1)throw new Error('invalid accepted: '+value);
+ }
+ for(const value of [1,'1',100,'5001',2147483647]){
+  v.next_build_number=value;calls=errors=0;save();if(calls!==1||errors!==0)throw new Error('valid rejected: '+value);
+ }
+ v.next_build_number='1';if(payload().next_build_number!==1)throw new Error('reset omitted');
+ v.next_build_number='5001';if(payload().next_build_number!==undefined)throw new Error('unchanged number submitted');
+ for(const state of [{admin:false,active:true,editable:true},{admin:true,active:false,editable:true},{admin:true,active:true,editable:false}]){
+  t.admin=state.admin;a.active=state.active;a.next_build_number_editable=state.editable;v.next_build_number='';
+  if(!field().disabled||payload().next_build_number!==undefined)throw new Error('disabled input submitted');
+  calls=errors=0;save();if(calls!==1||errors!==0)throw new Error('unrelated settings blocked');
+ }
+ `
+	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
 	}
 }

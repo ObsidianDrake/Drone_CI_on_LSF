@@ -11,8 +11,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/drone/drone/handler/api/request"
 	"github.com/drone/drone/core"
+	"github.com/drone/drone/handler/api/request"
 	"github.com/sirupsen/logrus"
 
 	"github.com/go-chi/chi"
@@ -61,7 +61,7 @@ func TestFind(t *testing.T) {
 	))
 
 	router := chi.NewRouter()
-	router.Get("/api/repos/{owner}/{name}", HandleFind())
+	router.Get("/api/repos/{owner}/{name}", HandleFind(nil))
 	router.ServeHTTP(w, r)
 
 	if got, want := w.Code, 200; want != got {

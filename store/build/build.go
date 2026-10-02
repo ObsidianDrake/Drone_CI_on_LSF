@@ -195,12 +195,28 @@ func (s *buildStore) Running(ctx context.Context) ([]*core.Build, error) {
 
 // Create persists a build to the datacore.
 func (s *buildStore) Create(ctx context.Context, build *core.Build, stages []*core.Stage) error {
+	return s.createIndexed(ctx, build, stages, nil)
+}
+
+func (s *buildStore) CreateNext(ctx context.Context, repo *core.Repository, build *core.Build, stages []*core.Stage) error {
+	if repo.ID != build.RepoID {
+		return fmt.Errorf("build repository does not match sequence repository")
+	}
+	sequence := *repo
+	if err := s.createIndexed(ctx, build, stages, &sequence); err != nil {
+		return err
+	}
+	repo.Counter, repo.Version = sequence.Counter, sequence.Version
+	return nil
+}
+
+func (s *buildStore) createIndexed(ctx context.Context, build *core.Build, stages []*core.Stage, repo *core.Repository) error {
 	var err error
 	switch s.db.Driver() {
 	case db.Postgres:
-		err = s.createPostgres(ctx, build, stages)
+		err = s.createPostgres(ctx, build, stages, repo)
 	default:
-		err = s.create(ctx, build, stages)
+		err = s.create(ctx, build, stages, repo)
 	}
 	if err != nil {
 		return err
@@ -222,9 +238,44 @@ func (s *buildStore) Create(ctx context.Context, build *core.Build, stages []*co
 	return s.index(ctx, build.ID, build.RepoID, event, name)
 }
 
-func (s *buildStore) create(ctx context.Context, build *core.Build, stages []*core.Stage) error {
+func allocateNumber(execer db.Execer, binder db.Binder, repo *core.Repository, build *core.Build) error {
+	if repo == nil {
+		return nil
+	}
+	params := map[string]interface{}{"id": repo.ID, "maximum": core.MaxBuildNumber}
+	query, args, err := binder.BindNamed(`UPDATE repos SET repo_counter = repo_counter + 1,
+repo_version = repo_version + 1 WHERE repo_id = :id AND repo_counter < :maximum`, params)
+	if err != nil {
+		return err
+	}
+	result, err := execer.Exec(query, args...)
+	if err != nil {
+		return err
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count != 1 {
+		return fmt.Errorf("repository missing or build number limit reached")
+	}
+	query, args, err = binder.BindNamed("SELECT repo_counter, repo_version FROM repos WHERE repo_id = :id", params)
+	if err != nil {
+		return err
+	}
+	if err = execer.QueryRow(query, args...).Scan(&repo.Counter, &repo.Version); err != nil {
+		return err
+	}
+	build.Number = repo.Counter
+	return nil
+}
+
+func (s *buildStore) create(ctx context.Context, build *core.Build, stages []*core.Stage, repo *core.Repository) error {
 	build.Version = 1
 	return s.db.Update(func(execer db.Execer, binder db.Binder) error {
+		if err := allocateNumber(execer, binder, repo, build); err != nil {
+			return err
+		}
 		params := toParams(build)
 		stmt, args, err := binder.BindNamed(stmtInsert, params)
 		if err != nil {
@@ -257,9 +308,12 @@ func (s *buildStore) create(ctx context.Context, build *core.Build, stages []*co
 	})
 }
 
-func (s *buildStore) createPostgres(ctx context.Context, build *core.Build, stages []*core.Stage) error {
+func (s *buildStore) createPostgres(ctx context.Context, build *core.Build, stages []*core.Stage, repo *core.Repository) error {
 	build.Version = 1
 	return s.db.Update(func(execer db.Execer, binder db.Binder) error {
+		if err := allocateNumber(execer, binder, repo, build); err != nil {
+			return err
+		}
 		params := toParams(build)
 		stmt, args, err := binder.BindNamed(stmtInsertPg, params)
 		if err != nil {

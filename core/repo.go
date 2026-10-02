@@ -23,6 +23,15 @@ const (
 	VisibilityInternal = "internal"
 )
 
+// MaxBuildNumber matches the signed INTEGER build_number columns on all stores.
+const MaxBuildNumber int64 = 1<<31 - 1
+
+// RepositoryBuildNumberStore provides guarded migration-time numbering changes.
+type RepositoryBuildNumberStore interface {
+	CanSetNextBuildNumber(context.Context, int64) (bool, error)
+	UpdateNextBuildNumber(context.Context, *Repository, int64) error
+}
+
 // Version control systems.
 const (
 	VersionControlGit       = "git"
@@ -67,6 +76,9 @@ type (
 		Build              *Build `json:"build,omitempty"`
 		Perms              *Perm  `json:"permissions,omitempty"`
 		Archived           bool   `json:"archived"`
+
+		// Computed for Settings; not persisted in the repository table.
+		NextBuildNumberEditable bool `json:"next_build_number_editable,omitempty"`
 	}
 
 	RepoBuildStage struct {

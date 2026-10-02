@@ -16,6 +16,7 @@ package repos
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/drone/drone/core"
 	"github.com/drone/drone/store/shared/db"
@@ -207,13 +208,51 @@ func (s *repoStore) Activate(ctx context.Context, repo *core.Repository) error {
 }
 
 func (s *repoStore) Update(ctx context.Context, repo *core.Repository) error {
+	return s.update(ctx, repo, false)
+}
+
+func (s *repoStore) CanSetNextBuildNumber(ctx context.Context, id int64) (bool, error) {
+	var count int
+	err := s.db.View(func(q db.Queryer, b db.Binder) error {
+		query, args, err := b.BindNamed(`SELECT COUNT(*) FROM repos WHERE repo_id = :id
+AND repo_active = :active
+AND NOT EXISTS (SELECT 1 FROM builds WHERE build_repo_id = :id)`, map[string]interface{}{"id": id, "active": true})
+		if err != nil {
+			return err
+		}
+		return q.QueryRow(query, args...).Scan(&count)
+	})
+	return count == 1, err
+}
+
+func (s *repoStore) UpdateNextBuildNumber(ctx context.Context, repo *core.Repository, next int64) error {
+	if next < 1 || next > core.MaxBuildNumber {
+		return fmt.Errorf("next build number is outside the supported range")
+	}
+	updated := *repo
+	updated.Counter = next - 1
+	if err := s.update(ctx, &updated, true); err != nil {
+		return err
+	}
+	*repo = updated
+	return nil
+}
+
+func (s *repoStore) update(ctx context.Context, repo *core.Repository, nextNumber bool) error {
 	versionNew := repo.Version + 1
 	versionOld := repo.Version
 	err := s.db.Lock(func(execer db.Execer, binder db.Binder) error {
 		params := ToParams(repo)
 		params["repo_version_old"] = versionOld
 		params["repo_version_new"] = versionNew
-		stmt, args, err := binder.BindNamed(stmtUpdate, params)
+		query := stmtUpdate
+		if nextNumber {
+			// Check eligibility and the repository version in the same write.
+			params["active_required"] = true
+			query += ` AND repo_active = :active_required
+AND NOT EXISTS (SELECT 1 FROM builds WHERE build_repo_id = :repo_id)`
+		}
+		stmt, args, err := binder.BindNamed(query, params)
 		if err != nil {
 			return err
 		}

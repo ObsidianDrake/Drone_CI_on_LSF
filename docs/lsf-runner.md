@@ -246,3 +246,22 @@ setenv DRONE_LSF_DEBUG_CLEANUP_INTERVAL 30m
 時間使用 Go duration 格式（例如 `168h`、`30m`，不支援 `7d`）；兩者需為正值，`0` 採用預設值，負值拒絕啟動。更新設定後需重啟 server。刪除 Drone build 歷史不會立即刪除保留的檔案。
 
 目錄可能包含 secrets、clone 憑證與執行腳本，應維持原有受限權限，不要當作公開 artifact。LSF 的 `.out`／`.err` 仍可能是空檔，因為 commands 輸出由另一份 log 收集到 Drone。
+
+## 搬遷時設定 Build Number
+
+Drone 管理員可在 repository **Settings → General → Build numbering** 的
+**Next Build Number** 欄位指定下一次編號，並按 **Save Changes** 儲存。
+欄位沿用 Timeout 的數字輸入樣式。只有 repository 已 Active 且完全沒有任何
+build records 時才能修改；包含 pending、running、success、failure、error 等
+所有狀態的紀錄都會阻擋修改。刪除全部 records 後可再次調整，允許調小或重設為 `1`。
+
+例如舊站最後編號是 `5000`，填入 `5001` 後，下一個 build 的
+`DRONE_BUILD_NUMBER` 就是 `5001`，之後依序為 `5002`、`5003`。
+有效範圍是 `1` 至 `2147483647`；儲存只調整下一次編號，不會自行觸發 build。
+此設定不會建立、改名或刪除既有 QC 資料夾。
+
+API 使用 `PATCH /api/repos/{owner}/{name}`，JSON 為
+`{"next_build_number":5001}`。舊版 `counter` API 的值代表「上一個編號」，
+也套用相同的 admin／Active／無紀錄條件；兩個欄位不可同時傳送。
+SQL store 將分配編號與建立 build/stages 合併為同一筆交易，
+設定儲存也會重新檢查紀錄與 repository version，避免與 webhook 同時觸發時互相覆寫。

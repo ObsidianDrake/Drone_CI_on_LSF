@@ -47,7 +47,7 @@ jobs:
               dnf install -y gcc glibc-devel binutils file git ca-certificates
               git config --global --add safe.directory /src
               bash scripts/build-rhel8.sh
-              go test -mod=readonly ./store/repos ./monitor ./handler/api/monitor ./handler/web ./internal/pipelineruntime ./operator/runner ./cmd/drone-server
+              go test -mod=readonly ./store/repos ./store/build ./trigger ./handler/api/repos ./monitor ./handler/api/monitor ./handler/web ./internal/pipelineruntime ./operator/runner ./cmd/drone-server
             '
 
       # UBI's public repositories do not provide tcsh. Run the LSF integration

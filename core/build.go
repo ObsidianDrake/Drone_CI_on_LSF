@@ -55,6 +55,12 @@ type Build struct {
 	Stages       []*Stage          `db:"-"                    json:"stages,omitempty"`
 }
 
+// BuildSequenceStore allocates a number and creates its build in one transaction.
+// This prevents a settings reset between number allocation and record creation.
+type BuildSequenceStore interface {
+	CreateNext(context.Context, *Repository, *Build, []*Stage) error
+}
+
 // BuildStore defines operations for working with builds.
 type BuildStore interface {
 	// Find returns a build from the datastore.

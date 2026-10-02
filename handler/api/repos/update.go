@@ -23,6 +23,7 @@ import (
 	"github.com/drone/drone/handler/api/render"
 	"github.com/drone/drone/handler/api/request"
 	"github.com/drone/drone/logger"
+	"github.com/drone/drone/store/shared/db"
 
 	"github.com/go-chi/chi"
 )
@@ -32,6 +33,7 @@ const maxTimeoutHours = int64((1<<63 - 1) / time.Hour)
 type (
 	repositoryInput struct {
 		TimeoutHours       json.RawMessage `json:"timeout_hours"`
+		NextBuildNumber    json.RawMessage `json:"next_build_number"`
 		Visibility         *string         `json:"visibility"`
 		Config             *string         `json:"config_path"`
 		Trusted            *bool           `json:"trusted"`
@@ -88,6 +90,32 @@ func HandleUpdate(repos core.RepositoryStore) http.HandlerFunc {
 			}
 			minutes := hours * 60
 			in.Timeout = &minutes
+		}
+		var nextNumber *int64
+		if len(in.NextBuildNumber) > 0 || in.Counter != nil {
+			if user == nil || !user.Admin {
+				http.Error(w, "Only Drone administrators can change the next build number", http.StatusForbidden)
+				return
+			}
+			var next int64
+			if len(in.NextBuildNumber) > 0 {
+				if in.Counter != nil || json.Unmarshal(in.NextBuildNumber, &next) != nil || next < 1 || next > core.MaxBuildNumber {
+					render.BadRequestf(w, "Next build number must be an integer from 1 to %d; do not also send counter", core.MaxBuildNumber)
+					return
+				}
+			} else {
+				// Apply the same guard to the legacy API (counter means last number).
+				if *in.Counter < 0 || *in.Counter >= core.MaxBuildNumber {
+					render.BadRequestf(w, "Counter is outside the supported range")
+					return
+				}
+				next = *in.Counter + 1
+			}
+			if !repo.Active {
+				http.Error(w, "Repository must be active to change the next build number", http.StatusConflict)
+				return
+			}
+			nextNumber = &next
 		}
 		if in.Timeout != nil {
 			if *in.Timeout < 1 || *in.Timeout > maxTimeoutHours*60 {
@@ -146,9 +174,6 @@ func HandleUpdate(repos core.RepositoryStore) http.HandlerFunc {
 			if in.Throttle != nil {
 				repo.Throttle = *in.Throttle
 			}
-			if in.Counter != nil {
-				repo.Counter = *in.Counter
-			}
 		}
 
 		// // right now the only repository field that a user
@@ -161,8 +186,21 @@ func HandleUpdate(repos core.RepositoryStore) http.HandlerFunc {
 		// 	repo.Visibility = in.Visibility
 		// }
 
-		err = repos.Update(r.Context(), repo)
+		if nextNumber != nil {
+			store, ok := repos.(core.RepositoryBuildNumberStore)
+			if !ok {
+				render.InternalErrorf(w, "Build number settings are unavailable")
+				return
+			}
+			err = store.UpdateNextBuildNumber(r.Context(), repo, *nextNumber)
+		} else {
+			err = repos.Update(r.Context(), repo)
+		}
 		if err != nil {
+			if nextNumber != nil && err == db.ErrOptimisticLock {
+				http.Error(w, "Cannot change next build number: repository changed, is inactive, or already has build records. Refresh Settings and try again.", http.StatusConflict)
+				return
+			}
 			render.InternalError(w, err)
 			logger.FromRequest(r).
 				WithError(err).
@@ -171,6 +209,10 @@ func HandleUpdate(repos core.RepositoryStore) http.HandlerFunc {
 			return
 		}
 
+		if store, ok := repos.(core.RepositoryBuildNumberStore); ok {
+			// A concurrent trigger may have created history since the update.
+			repo.NextBuildNumberEditable, _ = store.CanSetNextBuildNumber(r.Context(), repo.ID)
+		}
 		render.JSON(w, repo, 200)
 	}
 }

@@ -17,18 +17,27 @@ package repos
 import (
 	"net/http"
 
+	"github.com/drone/drone/core"
 	"github.com/drone/drone/handler/api/render"
 	"github.com/drone/drone/handler/api/request"
 )
 
 // HandleFind returns an http.HandlerFunc that writes the
 // json-encoded repository details to the response body.
-func HandleFind() http.HandlerFunc {
+func HandleFind(repos core.RepositoryStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		repo, _ := request.RepoFrom(ctx)
 		perm, _ := request.PermFrom(ctx)
 		repo.Perms = perm
+		if store, ok := repos.(core.RepositoryBuildNumberStore); ok {
+			var err error
+			repo.NextBuildNumberEditable, err = store.CanSetNextBuildNumber(ctx, repo.ID)
+			if err != nil {
+				render.InternalError(w, err)
+				return
+			}
+		}
 		render.JSON(w, repo, 200)
 	}
 }
