@@ -269,8 +269,8 @@ SQL store 將分配編號與建立 build/stages 合併為同一筆交易，
 ## LSF job name
 
 每個 step 提交時的 `bsub -J` 使用
-`Organization_Repository:PipelineName:StepName_BuildNumber`，例如
-`PDK_DRC_QC:regression:run-qc_5001`。`PipelineName` 對應 pipeline 的 `name`，
+`Organization:Repository:BuildNumber:PipelineName:StepName`，例如
+`PDK:DRC_QC:5001:regression:run-qc`。`PipelineName` 對應 pipeline 的 `name`，
 `StepName` 對應 step 的 `name`；clone 與 detach steps 也使用相同格式。
 外層的 `< >` 是格式佔位符，不包含在實際 job name 中。
 

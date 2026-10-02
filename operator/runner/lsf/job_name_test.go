@@ -29,18 +29,18 @@ steps:
 		t.Fatalf("steps: %d", len(spec.Steps))
 	}
 	for _, step := range spec.Steps {
-		want := "PDK_DRC_QC:regression:" + step.Metadata.Name + "_5001"
+		want := "PDK:DRC_QC:5001:regression:" + step.Metadata.Name
 		if got := stepJobName(spec, step); got != want {
 			t.Fatalf("name=%q want=%q", got, want)
 		}
 	}
 	// Stage metadata and YAML pipeline fallback must identify different pipelines.
 	spec.Metadata.Labels["io.drone.stage.name"] = "report"
-	if got := stepJobName(spec, spec.Steps[0]); got != "PDK_DRC_QC:report:clone_5001" {
+	if got := stepJobName(spec, spec.Steps[0]); got != "PDK:DRC_QC:5001:report:clone" {
 		t.Fatal(got)
 	}
 	delete(spec.Metadata.Labels, "io.drone.stage.name")
-	if got := stepJobName(spec, spec.Steps[0]); got != "PDK_DRC_QC:regression:clone_5001" {
+	if got := stepJobName(spec, spec.Steps[0]); got != "PDK:DRC_QC:5001:regression:clone" {
 		t.Fatal(got)
 	}
 }
@@ -51,7 +51,7 @@ func TestJobNameSpecialCharactersAndLength(t *testing.T) {
 		"io.drone.stage.name": "test:nightly", "io.drone.build.number": "123",
 	}}}
 	step := &engine.Step{Metadata: engine.Metadata{Name: "check\nresults;$(date)"}}
-	if got, want := stepJobName(spec, step), "team_sub_group_qc_1-4_:test_nightly:check_results___date__123"; got != want {
+	if got, want := stepJobName(spec, step), "team_sub_group:qc_1-4_:123:test_nightly:check_results___date_"; got != want {
 		t.Fatalf("name=%q want=%q", got, want)
 	}
 	step.Metadata.Name = strings.Repeat("long-step", 100)
@@ -59,7 +59,7 @@ func TestJobNameSpecialCharactersAndLength(t *testing.T) {
 	spec.Metadata.Labels["io.drone.repo.name"] = strings.Repeat("repo", 100)
 	spec.Metadata.Labels["io.drone.stage.name"] = strings.Repeat("pipeline", 100)
 	first := stepJobName(spec, step)
-	if len(first) > 250 || !strings.HasSuffix(first, "_123") || strings.Count(first, ":") != 2 {
+	if len(first) > 250 || strings.Split(first, ":")[2] != "123" || strings.Count(first, ":") != 4 {
 		t.Fatalf("invalid long name (%d): %s", len(first), first)
 	}
 	if second := stepJobName(spec, step); second != first {
@@ -69,7 +69,7 @@ func TestJobNameSpecialCharactersAndLength(t *testing.T) {
 	if second := stepJobName(spec, step); second == first {
 		t.Fatal("truncation lost distinguishing suffix")
 	}
-	if got := stepJobName(&engine.Spec{}, &engine.Step{}); got != "unknown_repository:default:step_0" {
+	if got := stepJobName(&engine.Spec{}, &engine.Step{}); got != "unknown:repository:0:default:step" {
 		t.Fatal(got)
 	}
 }

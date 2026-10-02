@@ -463,7 +463,7 @@ steps:
 	if len(events) != 2 || events[0].repo != 42 || events[1].repo != 0 || events[0].id != events[1].id {
 		t.Fatalf("tracking events: %+v", events)
 	}
-	if events[0].name != "PDK_DRC_QC:monitored:work_5001" {
+	if events[0].name != "PDK:DRC_QC:5001:monitored:work" {
 		t.Fatalf("tracked name: %q", events[0].name)
 	}
 	output, err := e.command(context.Background(), e.config.Bjobs, "-a", "-noheader", "-o", "jobid stat job_name:250", events[0].id)

@@ -28,7 +28,7 @@ func stepJobName(spec *engine.Spec, step *engine.Step) string {
 	// Build numbers are decimal int64 metadata; bound malformed test/custom specs.
 	build = shortenJobNamePart(build, 20)
 	compose := func() string {
-		return parts[0] + "_" + parts[1] + ":" + parts[2] + ":" + parts[3] + "_" + build
+		return parts[0] + ":" + parts[1] + ":" + build + ":" + parts[2] + ":" + parts[3]
 	}
 	if len(compose()) > maxJobName {
 		limit := (maxJobName - len(build) - 4) / len(parts)
