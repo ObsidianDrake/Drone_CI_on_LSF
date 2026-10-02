@@ -10,6 +10,7 @@ import (
 
 	"github.com/drone/drone/core"
 	"github.com/drone/drone/store/build"
+	"github.com/drone/drone/store/repos"
 	"github.com/drone/drone/store/shared/db"
 	"github.com/drone/drone/store/shared/db/dbtest"
 )
@@ -23,6 +24,51 @@ func fixture(t *testing.T) *Store {
 	t.Cleanup(func() { database.Close() })
 	return &Store{DB: database}
 }
+
+func TestRepositoriesOnlyActive(t *testing.T) {
+	ctx := context.Background()
+	s := fixture(t)
+	repositories := repos.New(s.DB)
+	idle := &core.Repository{UID: "idle", Slug: "org/z-idle", Active: true, Visibility: core.VisibilityPrivate}
+	busy := &core.Repository{UID: "busy", Slug: "org/a-busy", Active: true, Visibility: core.VisibilityPublic}
+	inactive := &core.Repository{UID: "inactive", Slug: "org/inactive", Visibility: core.VisibilityInternal}
+	for _, repo := range []*core.Repository{idle, inactive, busy} {
+		if err := repositories.Create(ctx, repo); err != nil {
+			t.Fatal(err)
+		}
+	}
+	addBuild(t, s, busy.ID, 1, core.StatusRunning)
+	addBuild(t, s, inactive.ID, 1, core.StatusRunning)
+	check := func(want ...*core.Repository) {
+		t.Helper()
+		got, err := s.Repositories(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected := []Repository{}
+		for _, repo := range want {
+			expected = append(expected, Repository{ID: repo.ID, Slug: repo.Slug, Created: repo.Created, Visibility: repo.Visibility})
+		}
+		if !reflect.DeepEqual(got, expected) {
+			t.Fatalf("repositories = %#v, want %#v", got, expected)
+		}
+	}
+	// Activation, not running builds or visibility, determines monitor membership.
+	check(busy, idle)
+	for _, repo := range []*core.Repository{busy, idle} {
+		repo.Active = false
+		if err := repositories.Update(ctx, repo); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check()
+	inactive.Active = true
+	if err := repositories.Update(ctx, inactive); err != nil {
+		t.Fatal(err)
+	}
+	check(inactive)
+}
+
 func addBuild(t *testing.T, s *Store, repo, number int64, status string) {
 	t.Helper()
 	if err := build.New(s.DB).Create(context.Background(), &core.Build{RepoID: repo, Number: number, Status: status}, nil); err != nil {

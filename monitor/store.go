@@ -25,10 +25,15 @@ type Repository struct {
 }
 type Store struct{ DB *db.DB }
 
+// Repositories lists enabled repositories, including those with no current workload.
 func (s *Store) Repositories(ctx context.Context) ([]Repository, error) {
 	out := []Repository{}
-	err := s.DB.View(func(q db.Queryer, _ db.Binder) error {
-		rows, err := q.Query("SELECT repo_id, repo_slug, repo_created, repo_visibility FROM repos ORDER BY repo_slug")
+	err := s.DB.View(func(q db.Queryer, b db.Binder) error {
+		query, args, err := b.BindNamed("SELECT repo_id, repo_slug, repo_created, repo_visibility FROM repos WHERE repo_active = :active ORDER BY repo_slug", map[string]interface{}{"active": true})
+		if err != nil {
+			return err
+		}
+		rows, err := q.Query(query, args...)
 		if err != nil {
 			return err
 		}

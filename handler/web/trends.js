@@ -53,7 +53,7 @@ function DroneTrends(props){
  data&&data.permission_errors?h('p',{role:'status',className:'dt-notice'},'Some repository permissions could not be verified. Those repositories are not shown.'):null,
  data&&!data.lsf_enabled?h('p',{role:'status',className:'dt-notice'},'LSF sampling requires the local LSF runner. Build history is still available.'):null,
  h('div',{className:'dt-layout'},h('aside',{className:'dt-repositories'},h('div',{className:'dt-repo-title'},h('h2',null,'Repositories'),h('span',null,chosen.length+'/12')),
- h('p',null,'Only repositories you can access.'),h('input',{type:'search',placeholder:'Find a repository…','aria-label':'Find a repository',value:search,onChange:function(e){searchState[1](e.target.value);}}),
+ h('p',null,'Only active repositories you can access.'),h('input',{type:'search',placeholder:'Find a repository…','aria-label':'Find a repository',value:search,onChange:function(e){searchState[1](e.target.value);}}),
  h('div',{className:'dt-repo-actions'},h('button',{type:'button',onClick:function(){setSelected(filtered.slice(0,12).map(function(repo){return repo.id;}));}},'Select first 12'),h('button',{type:'button',onClick:function(){setSelected([]);}},'Clear')),
  h('div',{className:'dt-repo-list'},filtered.map(function(repo){return h('label',{key:repo.id,title:repo.slug},h('input',{type:'checkbox',checked:chosen.indexOf(repo.id)>=0,disabled:chosen.length>=12&&chosen.indexOf(repo.id)<0,onChange:function(){toggle(repo.id);}}),h('i',{style:{background:droneTrendColor(repo)}}),h('span',null,repo.slug));}),!filtered.length?h('p',null,'No matching repositories.'):null),
  h('p',{className:'dt-retention'},'7-day history',h('br'),'Counts are sampled, not a complete job audit.')),
