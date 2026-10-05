@@ -113,7 +113,7 @@ steps:
 
 Ref fallback 必須有合法的完整 `DRONE_COMMIT_REF`；不會猜測 `master`、`main` 或 PR 的 target branch。若 ref 被刪除、force-push 後原 commit 無法取得、認證失敗或遠端無法提供物件，clone 會失敗並停止後續 steps。沒有無限重試，也不會預先抓取所有 branches / tags。SHA fetch 的原始錯誤即使後續 fallback 成功仍會保留；最終成功以 `Verified HEAD` 及 step exit code 為準。
 
-程式產生的原生 clone 腳本固定由 `/bin/sh` 執行，以明確處理 fetch 失敗；`SHELL_TYPE` / `DRONE_LSF_SHELL` 繼續控制使用者的 commands steps。既有 netrc、SSL verify 與 LSF resource 設定照常生效。
+原生 clone 先透過 `SHELL_TYPE` / `DRONE_LSF_SHELL` 選定的 shell 初始化環境，再將匯出的環境交給固定的 `/bin/sh` 執行 clone 腳本，以明確處理 fetch 失敗。停用初始化時，clone 直接使用 `/bin/sh`，不要求初始化 shell 存在。既有 netrc、SSL verify 與 LSF resource 設定照常生效。
 
 Clone 在執行主要 Git 指令前，以與一般 steps 相同的綠色 `+ command` 顯示指令；ref fallback 與完整歷史補抓只在實際執行時顯示。指令中的 URL、SHA、ref 使用原本的環境變數名稱呈現，避免 trace 展開 URL 中可能存在的認證資訊；`[clone]` 診斷與結果仍保留。
 
@@ -128,7 +128,38 @@ BSUB_OPTION: >-
 
 資源條件名稱與值需依公司叢集設定。step 的 `-q`、`-R`、`-n` 分別取代 runner 的 queue、resources、slots 預設。選項解析不執行 shell substitution。工作名稱、工作目錄、輸出與環境由 Drone 管理，因此拒絕 `-J`、`-cwd`、`-o` / `-oo`、`-e` / `-eo`、`-env` 等衝突選項，也不接受互動模式或 `-K` 等同步提交模式。
 
-`SHELL_TYPE` 支援 `csh`、`tcsh`、`sh`、`bash` 或這些 shell 的絕對路徑，執行節點必須已安裝。未指定時使用 `DRONE_LSF_SHELL`；commands 必須符合選定 shell 的語法。csh/tcsh 使用 `-f -e`，sh 使用 `-e`，bash 使用 `--noprofile --norc -e`，不自動讀取個人初始化檔案。
+`SHELL_TYPE` 支援 `csh`、`tcsh`、`sh`、`bash` 或這些 shell 的絕對路徑，執行節點必須已安裝。未指定時使用 `DRONE_LSF_SHELL`；commands 必須符合選定 shell 的語法。
+
+### Shell 初始化（預設啟用）
+
+`SHELL_INIT` **不是必填項目**。預設在每個 job 的執行節點載入該 shell 的設定，再執行 commands；使用執行 LSF job 的 OS 帳號所繼承的 `HOME`，不是 Gitea 使用者的 home，也不以 YAML 的 `HOME` 覆寫值選擇初始化檔案。
+
+| Shell | 啟用時的載入方式 |
+| --- | --- |
+| `tcsh` | 原生非 login 啟動：系統 rc 檔，以及 `~/.tcshrc`；沒有 `.tcshrc` 才讀 `~/.cshrc` |
+| `csh` | 原生非 login 啟動，遵循節點上該 shell 的系統／個人 rc 規則；若實際為 tcsh，遵循 tcsh 規則 |
+| `bash` | Runner 明確 source `~/.bashrc`，不載入 login profile |
+| `sh` | Runner 明確以 POSIX `.` 載入 `~/.profile`，不載入 `/etc/profile` |
+
+個人檔案不存在時略過。全程是非互動的批次執行，不開啟 terminal、不強制 login shell。設定檔若在非互動模式提早 return，後面的設定不會被載入；請將 EDA、License、LSF 等共用環境設定放在互動模式判斷之前，並將 `stty`、等待輸入等操作限制在互動模式內。
+
+初始化發生非零退出／命令失敗時，step 會失敗，log 顯示初始化未完成；tcsh 的 rc 內 `exit 0` 遵循其原生行為，表示成功返回該 rc 檔。初始化後會回到 step 的 workspace / `working_dir`，再執行 commands。一般 step 在同一個 shell 保留初始化的 alias、function 與 shell 變數；clone 僅接收匯出的環境變數，仍使用相容 Git 1.7.1 的 POSIX 腳本。
+
+只在需要略過初始化時加入：
+
+```yaml
+steps:
+  - name: clean-environment
+    environment:
+      SHELL_TYPE: tcsh
+      SHELL_INIT: "false"
+    commands:
+      - echo "Skip shell startup files"
+```
+
+也可在 server 設定 `DRONE_LSF_SHELL_INIT=false`，將預設改為停用；個別 step 可用 `SHELL_INIT: "true"` 重新啟用。省略 `SHELL_INIT` 時沿用 server 預設。停用 tcsh/csh 使用 `-f -e`，bash 不 source `.bashrc`，sh 不 source `.profile`，但仍保留 LSF 繼承的環境。Runner 的啟動階段不額外執行 `BASH_ENV` / `ENV` 指向的檔案；變數本身仍遵循繼承、rc 設定、明確覆寫的順序保留。
+
+頂層 environment 作為明列 steps 的預設值；需要在 YAML 自訂 clone 的 `SHELL_TYPE` / `SHELL_INIT` 時，使用前述 `clone.disable: true` 搭配明列的 `name: clone`、`image: git`。未明列的自動 clone 使用 runner 預設或 runner 全域 environment。
 
 ## 接公司 LSF
 
@@ -143,6 +174,7 @@ BSUB_OPTION: >-
 | `DRONE_LSF_SLOTS` | `1` | `bsub -n` 預設值，step 可覆寫 |
 | `DRONE_LSF_RESOURCES` | 空白 | `bsub -R`，完整字串作為單一參數 |
 | `DRONE_LSF_SHELL` | `/bin/tcsh` | 預設 shell，step 可用 `SHELL_TYPE` 覆寫 |
+| `DRONE_LSF_SHELL_INIT` | `true` | 預設載入 shell 設定檔，step 可用選填的 `SHELL_INIT` 覆寫 |
 | `DRONE_LSF_POLL_INTERVAL` | `1s` | 查詢狀態與讀取日誌間隔 |
 | `DRONE_LSF_COMMAND_TIMEOUT` | `30s` | 單次 LSF CLI 的逾時 |
 | `DRONE_LSF_CLEANUP_TIMEOUT` | `1m` | 取消後等待 LSF 確認結束的上限 |
@@ -162,11 +194,11 @@ BSUB_OPTION: >-
 
 Runner 使用 `bsub -env all`，讓 LSF 傳遞啟動 server / 提交 bsub 的環境；wrapper 不再使用 `env -i` 清空環境，也不強制替換 `HOME` 或 `PATH`。因此 `LSF_ENVDIR`、LSF client 設定、library / license 路徑與公司自訂的環境變數，不必逐一填入每個 user 的 `.drone.yml`。繼承範圍包括 server process 的環境變數，pipeline 仍限 Trusted repositories。
 
-以 LSF 在執行節點提供的環境為基礎，再套用 Drone metadata、pipeline / step environment、Runner 全域 environment 與 secrets。同名的明確設定會覆寫繼承值；現有 `DRONE_RUNNER_ENVIRON` 的優先序高於 YAML 同名設定。`LSB_JOBID`、`LSB_JOBNAME`、`LSB_QUEUE`、`LSB_DJOB_NUMPROC` 保留目前執行 job 的值，不會套用 YAML 偽造的 job 資訊。`HOME`、`USER` 與其他 LSF job 變數仍遵循 LSF 的主機端處理規則，不強行複製提交端的 job 身分。
+以 LSF 在執行節點提供的環境為基礎，先載入選定 shell 的設定檔，再套用 Drone metadata、pipeline / step environment、Runner 全域 environment 與 secrets。同名的明確設定會覆寫繼承值與 rc 檔設定；現有 `DRONE_RUNNER_ENVIRON` 的優先序仍高於 YAML 同名設定。`LSB_JOBID`、`LSB_JOBNAME`、`LSB_QUEUE`、`LSB_DJOB_NUMPROC` 保留目前執行 job 的值，不會被 rc 或 YAML 覆寫。初始化檔案採用 LSF 提供的帳號 HOME；明確設定的 `HOME` 與其他環境變數在初始化後才生效。
 
-請先在具有正確公司 LSF / tool 環境的 shell 啟動 server；若使用服務管理器，則在該服務的啟動設定載入同樣環境。修改登入 shell 不會改變已執行中的 server，需要重啟。繼承的是環境變數，不包含 tcsh aliases 或未 export 的 shell 變數；commands shell 仍使用前述非 login 模式。先前為了補 `LSF_ENVDIR` 而加到 `DRONE_RUNNER_ENVIRON` 的項目可以移除，或保留作為刻意的全域覆寫；其他既有項目不必刪除。
+請先在具有正確公司 LSF client 環境的 shell 啟動 server；若使用服務管理器，則在該服務的啟動設定載入同樣環境，讓 server 能提交及查詢 job。修改登入 shell 不會改變已執行中的 server，需要重啟；執行節點的 rc 檔則在每個新 step 啟動時重新讀取。提交環境的 aliases 與未 export 的 shell 變數不會被 LSF 傳遞，但一般 commands 可以使用該 job 初始化時重新建立的 shell 狀態。先前為了補 `LSF_ENVDIR` 而加到 `DRONE_RUNNER_ENVIRON` 的項目可以移除，或保留作為刻意的全域覆寫；其他既有項目不必刪除。
 
-一般 commands 使用帳號原本的 `HOME`、Git config 與認證。原生 clone 有 Drone HTTP 認證時，只有該 clone 的 Git subprocess 使用暫存 HOME / netrc，確保 Git 1.8.3.1 相容且不覆蓋帳號的 `~/.netrc`；step 本身的 HOME 不變。沒有 CI 認證時，clone Git 也使用繼承的 HOME。
+一般 commands 預設使用帳號原本的 `HOME`、Git config 與認證。原生 clone 也先讀取帳號本人的 shell 設定；有 Drone HTTP 認證時，只有該 clone 的 Git subprocess 使用暫存 HOME / netrc，確保 Git 1.7.1 / 1.8.3.1 相容且不覆蓋帳號的 `~/.netrc`。沒有 CI 認證時，clone Git 也使用初始化與明確設定完成後的 HOME。
 
 Step 可直接提交巢狀 job，例如 `bsub -q test.q sleep 10`。若 step 需要等待子 job 完成並採用其 exit code，可用 `bsub -K -q test.q sleep 10`；普通 `bsub` 提交成功就返回。這次環境繼承不包含子 job 自動追蹤或清除，Runner 的取消 / detach 收尾仍只管理它直接提交的 step jobs。
 

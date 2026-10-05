@@ -260,6 +260,7 @@ type (
 		Queue                string        `envconfig:"DRONE_LSF_QUEUE"`
 		Resources            string        `envconfig:"DRONE_LSF_RESOURCES"`
 		Shell                string        `envconfig:"DRONE_LSF_SHELL" default:"/bin/tcsh"`
+		ShellInit            bool          `envconfig:"DRONE_LSF_SHELL_INIT" default:"true"`
 		Slots                int           `envconfig:"DRONE_LSF_SLOTS" default:"1"`
 		PollInterval         time.Duration `envconfig:"DRONE_LSF_POLL_INTERVAL" default:"1s"`
 		CommandTimeout       time.Duration `envconfig:"DRONE_LSF_COMMAND_TIMEOUT" default:"30s"`

@@ -158,6 +158,23 @@ steps:
 
 func TestAuthenticatedHTTPClone(t *testing.T) {
 	e := testEngine(t)
+	// Both the native clone and command step initialize from the account HOME.
+	// In CI, select real Git 1.7.1 via the rc file, including HTTP netrc auth.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	client := os.Getenv("DRONE_TEST_GIT_1_7_1")
+	if client == "" {
+		var err error
+		client, err = exec.LookPath("git")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	client, err := filepath.Abs(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeStartupFile(t, filepath.Join(home, ".cshrc"), "setenv PATH "+quote(filepath.Dir(client)+":/usr/bin:/bin")+"\necho account-shell-ready\n")
 	repo := t.TempDir()
 	runGit := func(args ...string) string {
 		cmd := exec.Command("git", args...)
@@ -200,7 +217,7 @@ steps:
   - cat tracked
 `, transform.WithEnviron(map[string]string{"DRONE_REMOTE_URL": server.URL, "DRONE_COMMIT_REF": "refs/heads/main", "DRONE_COMMIT_SHA": sha, "GIT_TERMINAL_PROMPT": "0"}), transform.WithNetrc(address.Hostname(), "test-token", "x-oauth-basic"))
 	var logs strings.Builder
-	err := runtime.New(runtime.WithEngine(e), runtime.WithConfig(spec), runtime.WithHooks(&runtime.Hook{
+	err = runtime.New(runtime.WithEngine(e), runtime.WithConfig(spec), runtime.WithHooks(&runtime.Hook{
 		GotLine: func(_ *runtime.State, l *runtime.Line) error { logs.WriteString(l.Message); return nil },
 	})).Run(context.Background())
 	if err != nil {
@@ -208,6 +225,9 @@ steps:
 	}
 	if !strings.Contains(logs.String(), "cloned-content") {
 		t.Fatal(logs.String())
+	}
+	if strings.Count(logs.String(), "account-shell-ready") != 2 || !strings.Contains(logs.String(), "[clone] Git executable: "+client) {
+		t.Fatalf("clone did not initialize from account rc: %s", logs.String())
 	}
 }
 
@@ -319,7 +339,7 @@ steps:
 }
 
 func TestLintRejectsContainerAndUnsafePaths(t *testing.T) {
-	for _, settings := range []string{"image: alpine", "working_dir: ../escape", "shell: fish", "resources: {limits: {cpu: 1}}"} {
+	for _, settings := range []string{"image: alpine", "working_dir: ../escape", "shell: fish", "resources: {limits: {cpu: 1}}", "environment: {SHELL_INIT: maybe}"} {
 		t.Run(settings, func(t *testing.T) {
 			m, err := yaml.ParseString("kind: pipeline\ntype: lsf\nsteps:\n- name: test\n  commands: [echo ok]\n  " + settings + "\n")
 			if err != nil {
@@ -660,7 +680,7 @@ steps:
 	}
 	for _, name := range []string{"a", "b", "c"} {
 		records := lines[name]
-		if len(records) < 6 {
+		if len(records) < 7 {
 			t.Fatalf("%s missing log records: %q", name, records)
 		}
 		for _, line := range records {
@@ -668,8 +688,9 @@ steps:
 				t.Fatalf("%s: artificial empty record: %q", name, records)
 			}
 		}
-		// Initial blank, three Debug lines, one intentional blank, first command.
-		if !strings.HasPrefix(records[3], "[Debug] LSF error:") || records[4] != "\n" || !strings.HasPrefix(records[5], "\x1b[32m+ ") {
+		// Initial blank, three Debug lines, one intentional blank, environment
+		// diagnostic, then the first command. No extra empty log records.
+		if !strings.HasPrefix(records[3], "[Debug] LSF error:") || records[4] != "\n" || !strings.HasPrefix(records[5], "[environment] Shell:") || !strings.HasPrefix(records[6], "\x1b[32m+ ") {
 			t.Fatalf("%s: inconsistent header spacing: %q", name, records)
 		}
 	}

@@ -26,6 +26,7 @@ const DebugRetainLabel = "lsf.drone.io/debug-retain"
 type Config struct {
 	Bsub, Bjobs, Bkill                           string
 	Workspace, Queue, Resources, Shell           string
+	DisableShellInit                             bool
 	Slots                                        int
 	PollInterval, CommandTimeout, CleanupTimeout time.Duration
 	DebugRetention, DebugCleanupInterval         time.Duration
@@ -242,12 +243,16 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 	if shell == "" {
 		shell = e.config.Shell
 	}
-	// The generated clone script handles expected fetch failures itself and
-	// uses POSIX syntax. SHELL_TYPE continues to control user command steps.
-	if nativeClone {
+	initialize, err := shellInitEnabled(env["SHELL_INIT"], !e.config.DisableShellInit)
+	if err != nil {
+		return err
+	}
+	// Clone initialization uses the selected shell, then execs the POSIX
+	// clone script with the initialized, overlaid environment.
+	if nativeClone && !initialize {
 		shell = "/bin/sh"
 	}
-	command, err := shellArgs(shell)
+	command, err := shellStartupArgs(shell, initialize)
 	if err != nil {
 		return err
 	}
@@ -276,14 +281,26 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 		delete(env, prefix+"_NETRC_USERNAME")
 		delete(env, prefix+"_NETRC_PASSWORD")
 	}
+	// Snapshot live LSF metadata before startup files can change it.
+	runtimeEnv := map[string]bool{}
+	for _, key := range []string{"LSB_JOBID", "LSB_JOBNAME", "LSB_QUEUE", "LSB_DJOB_NUMPROC"} {
+		env[key] = ""
+		runtimeEnv[key] = true
+	}
 	keys := make([]string, 0, len(env))
 	for key, value := range env {
-		if !envPattern.MatchString(key) || strings.ContainsRune(value, 0) {
+		if !envPattern.MatchString(key) || strings.ContainsRune(value, 0) || strings.HasPrefix(key, shellEnvPrefix) {
 			return fmt.Errorf("lsf: invalid environment variable %q", key)
 		}
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	startup := shellStartupScript(shell, initialize, nativeClone, keys, script)
+	startupPath := filepath.Join(dir, "startup.script")
+	if err := os.WriteFile(startupPath, []byte(startup), 0600); err != nil {
+		return err
+	}
+	readyPath := filepath.Join(dir, "environment.ready")
 	var wrapper strings.Builder
 	// The tail reader may already have consumed the Debug header before LSF starts.
 	// Never truncate this file or invalidate its current read offset.
@@ -296,18 +313,32 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 	wrapper.WriteString("stderr_reader=$!\n")
 	// This is runner-owned state, never inherited from a parent build.
 	wrapper.WriteString("unset DRONE_LSF_CLONE_NETRC_HOME\n")
+	fmt.Fprintf(&wrapper, "printf '%%s\\n' %s\n", quote(fmt.Sprintf("[environment] Shell: %s; startup files: %t", shell, initialize)))
 	wrapper.WriteString("/usr/bin/env")
-	for _, key := range keys {
-		wrapper.WriteString(" " + quote(key+"="+env[key]))
+	for i, key := range keys {
+		name := shellEnvName(i)
+		if runtimeEnv[key] {
+			wrapper.WriteString(" " + name + "=\"${" + key + ":-}\"")
+		} else {
+			wrapper.WriteString(" " + quote(name+"="+env[key]))
+		}
 	}
-	for _, key := range []string{"LSB_JOBID", "LSB_JOBNAME", "LSB_QUEUE", "LSB_DJOB_NUMPROC"} {
-		wrapper.WriteString(" " + key + "=\"${" + key + ":-}\"")
+	wrapper.WriteString(" " + quote(shellEnvPrefix+"WORKDIR="+filepath.Join(p.workspace, step.WorkingDir)))
+	wrapper.WriteString(" " + quote(shellEnvPrefix+"READY="+readyPath))
+	if nativeClone {
+		wrapper.WriteString(" " + quote(shellEnvPrefix+"COMMANDS="+filepath.Join(dir, "commands.script")))
+	}
+	if !isCShell(shell) {
+		// Avoid implicit startup of noninteractive Bourne shells. The bootstrap
+		// restores these before sourcing rc, so rc can still update their values.
+		wrapper.WriteString(" " + shellEnvPrefix + "BASH_ENV=\"${BASH_ENV:-}\" " + shellEnvPrefix + "ENV=\"${ENV:-}\" BASH_ENV= ENV=")
 	}
 	for _, arg := range command {
 		wrapper.WriteString(" " + quote(arg))
 	}
-	wrapper.WriteString(" " + quote(filepath.Join(dir, "commands.script")) + " 2>" + stderrPipe + "\n")
-	wrapper.WriteString("command_status=$?\nwait \"$stderr_reader\"\nexit \"$command_status\"\n")
+	wrapper.WriteString(" " + quote(startupPath) + " 2>" + stderrPipe + "\n")
+	wrapper.WriteString("command_status=$?\nwait \"$stderr_reader\"\n")
+	wrapper.WriteString("if [ ! -f " + quote(readyPath) + " ]; then\n  printf '%s\\n' '[environment] ERROR: shell initialization did not complete; commands were not started'\n  if [ \"$command_status\" -eq 0 ]; then command_status=125; fi\nfi\nexit \"$command_status\"\n")
 	if err := os.WriteFile(j.wrapper, []byte(wrapper.String()), 0600); err != nil {
 		return err
 	}

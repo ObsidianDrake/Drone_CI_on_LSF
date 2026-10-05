@@ -28,7 +28,7 @@ func TestLSFEngineConfiguration(t *testing.T) {
 	if err := envconfig.Process("", &c); err != nil {
 		t.Fatal(err)
 	}
-	if c.LSF.Queue != "test" || c.LSF.Slots != 1 {
+	if c.LSF.Queue != "test" || c.LSF.Slots != 1 || !c.LSF.ShellInit {
 		t.Fatalf("LSF config: %+v", c.LSF)
 	}
 	backend, err := provideEngine(c)

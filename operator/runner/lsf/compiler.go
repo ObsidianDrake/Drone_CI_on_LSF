@@ -109,6 +109,11 @@ func Lint(p *yaml.Pipeline, trusted bool) error {
 				return err
 			}
 		}
+		if value := s.Environment["SHELL_INIT"]; value != nil && value.Secret == "" {
+			if _, err := shellInitEnabled(value.Value, true); err != nil {
+				return err
+			}
+		}
 		if !relativePath(s.WorkingDir) {
 			return fmt.Errorf("lsf: step %q working_dir must be relative to the workspace", s.Name)
 		}
