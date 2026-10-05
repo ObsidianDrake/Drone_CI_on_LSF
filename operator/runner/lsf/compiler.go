@@ -1,6 +1,7 @@
 package lsf
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	"github.com/drone/drone-yaml/yaml/compiler"
 	"github.com/drone/drone-yaml/yaml/linter"
 )
+
+const commandsLabel = "lsf.drone.io/commands"
 
 // PipelineType recognizes the company's git/none image markers only when no
 // explicit type was provided. Explicit Docker pipelines keep their semantics.
@@ -147,6 +150,7 @@ func Compile(c *compiler.Compiler, p *yaml.Pipeline) *engine.Spec {
 	}
 	for _, step := range spec.Steps {
 		var script string
+		labels := make(map[string]string)
 		step.WorkingDir = ""
 		source := steps[step.Metadata.Name]
 		if clone := steps["clone"]; graph && clone != nil && clone.Image == "git" && step.Metadata.Name != "clone" && len(step.DependsOn) == 0 {
@@ -160,6 +164,9 @@ func Compile(c *compiler.Compiler, p *yaml.Pipeline) *engine.Spec {
 			}
 		} else {
 			script = commandScript(source.Commands)
+			// Preserve YAML command boundaries until the execution shell is known.
+			data, _ := json.Marshal(source.Commands)
+			labels[commandsLabel] = string(data)
 			step.WorkingDir = source.WorkingDir
 		}
 		if source != nil && source.Shell != "" && step.Envs["SHELL_TYPE"] == "" {
@@ -168,8 +175,9 @@ func Compile(c *compiler.Compiler, p *yaml.Pipeline) *engine.Spec {
 		step.Volumes = nil
 		step.Files = nil
 		step.Docker = nil
+		labels["lsf.drone.io/clone"] = fmt.Sprint(nativeClone)
 		spec.Files = append(spec.Files, &engine.File{
-			Metadata: engine.Metadata{Name: step.Metadata.Name, Labels: map[string]string{"lsf.drone.io/clone": fmt.Sprint(nativeClone)}}, Data: []byte(script),
+			Metadata: engine.Metadata{Name: step.Metadata.Name, Labels: labels}, Data: []byte(script),
 		})
 	}
 	return spec
@@ -179,6 +187,10 @@ func Compile(c *compiler.Compiler, p *yaml.Pipeline) *engine.Spec {
 // persist. Trace each YAML command as literal bytes, without shell expansion.
 // Multi-line commands remain intact (including heredocs and control flow).
 func commandScript(commands []string) string {
+	return checkedCommandScript(commands, false)
+}
+
+func checkedCommandScript(commands []string, csh bool) string {
 	var script strings.Builder
 	for _, command := range commands {
 		var encoded strings.Builder
@@ -188,6 +200,11 @@ func commandScript(commands []string) string {
 		fmt.Fprintf(&script, "/usr/bin/printf '\\033[32m+ %s\\033[0;37m\\n'\n", encoded.String())
 		script.WriteString(command)
 		script.WriteByte('\n')
+		if csh {
+			// Keep this inline: an alias/function/eval can reset $status before
+			// reading it. Multi-line YAML entries are one logical command.
+			script.WriteString("if ($status != 0) exit $status\n")
+		}
 	}
 	return script.String()
 }

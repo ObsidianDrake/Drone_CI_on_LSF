@@ -4,6 +4,7 @@ package lsf
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -190,10 +191,12 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 		return fmt.Errorf("lsf: invalid working directory")
 	}
 	var script []byte
+	var sourceCommands string
 	nativeClone := false
 	for _, file := range spec.Files {
 		if file.Metadata.Name == step.Metadata.Name {
 			script = file.Data
+			sourceCommands = file.Metadata.Labels[commandsLabel]
 			nativeClone = file.Metadata.Labels["lsf.drone.io/clone"] == "true"
 			break
 		}
@@ -206,9 +209,6 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 		return err
 	}
 	j := &job{dir: dir, log: filepath.Join(dir, "output.log"), wrapper: filepath.Join(dir, "run.sh"), done: make(chan struct{})}
-	if err := os.WriteFile(filepath.Join(dir, "commands.script"), script, 0600); err != nil {
-		return err
-	}
 	var initialLog []byte
 	if p.debugRetain {
 		initialLog = []byte(fmt.Sprintf("\n[Debug] Pipeline directory retained after completion: %s (retention: %s; expiry recorded in %s after confirmed completion)\n[Debug] LSF output: %s\n[Debug] LSF error: %s\n\n", p.dir, e.config.DebugRetention, debugRetentionFile, filepath.Join(j.dir, "scheduler.out"), filepath.Join(j.dir, "scheduler.err")))
@@ -254,6 +254,16 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 	}
 	command, err := shellStartupArgs(shell, initialize)
 	if err != nil {
+		return err
+	}
+	if !nativeClone && isCShell(shell) && sourceCommands != "" {
+		var commands []string
+		if err := json.Unmarshal([]byte(sourceCommands), &commands); err != nil {
+			return fmt.Errorf("lsf: invalid command list: %w", err)
+		}
+		script = []byte(checkedCommandScript(commands, true))
+	}
+	if err := os.WriteFile(filepath.Join(dir, "commands.script"), script, 0600); err != nil {
 		return err
 	}
 	for _, prefix := range []string{"DRONE", "CI"} {
@@ -338,7 +348,7 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 	}
 	wrapper.WriteString(" " + quote(startupPath) + " 2>" + stderrPipe + "\n")
 	wrapper.WriteString("command_status=$?\nwait \"$stderr_reader\"\n")
-	wrapper.WriteString("if [ ! -f " + quote(readyPath) + " ]; then\n  printf '%s\\n' '[environment] ERROR: shell initialization did not complete; commands were not started'\n  if [ \"$command_status\" -eq 0 ]; then command_status=125; fi\nfi\nexit \"$command_status\"\n")
+	wrapper.WriteString("if [ ! -f " + quote(readyPath) + " ]; then\n  printf '[environment] ERROR: shell initialization did not complete (exit status %s); commands were not started\\n' \"$command_status\"\n  if [ \"$command_status\" -eq 0 ]; then command_status=125; fi\nfi\nexit \"$command_status\"\n")
 	if err := os.WriteFile(j.wrapper, []byte(wrapper.String()), 0600); err != nil {
 		return err
 	}

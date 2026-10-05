@@ -2,6 +2,7 @@ package lsf
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -110,12 +111,7 @@ func TestTcshStartupFilePrecedence(t *testing.T) {
 
 func TestShellStartupFailure(t *testing.T) {
 	for _, shell := range []string{"tcsh", "bash", "sh"} {
-		for _, rc := range []string{"exit 0\n", "exit 7\n", "false\necho must-not-run\n"} {
-			// In tcsh an exit in a sourced file returns from that file. A zero
-			// status is a successful early return, not a failed initialization.
-			if shell == "tcsh" && rc == "exit 0\n" {
-				continue
-			}
+		for _, rc := range []string{"exec /bin/sh -c 'exit 0'\n", "exec /bin/sh -c 'exit 7'\n"} {
 			t.Run(shell+"/"+strings.TrimSpace(rc), func(t *testing.T) {
 				home := t.TempDir()
 				name := map[string]string{"tcsh": ".cshrc", "bash": ".bashrc", "sh": ".profile"}[shell]
@@ -123,6 +119,46 @@ func TestShellStartupFailure(t *testing.T) {
 				log, _, err := runStartupStep(t, shell, home, "echo commands-must-not-run\n", nil, false, false, "")
 				if err == nil || strings.Contains(log, "\ncommands-must-not-run\n") || strings.Contains(log, "\nmust-not-run\n") || !strings.Contains(log, "initialization did not complete") {
 					t.Fatalf("startup failure: %v %s", err, log)
+				}
+			})
+		}
+	}
+}
+
+func TestShellStartupNonzeroProbes(t *testing.T) {
+	for _, shell := range []string{"tcsh", "csh", "bash", "sh"} {
+		t.Run(shell, func(t *testing.T) {
+			home := t.TempDir()
+			name := map[string]string{"tcsh": ".cshrc", "csh": ".cshrc", "bash": ".bashrc", "sh": ".profile"}[shell]
+			assignment, check := "export AFTER_PROBE=loaded", "test \"$AFTER_PROBE\" = loaded"
+			if isCShell(shell) {
+				assignment, check = "setenv AFTER_PROBE loaded", "if (\"$AFTER_PROBE\" != loaded) exit 9"
+			}
+			// Reproduce production: normal startup succeeds, -e exits silently
+			// with status 2. A final nonzero status must not reject initialization.
+			writeStartupFile(t, filepath.Join(home, name), "/bin/sh -c 'exit 2'\n"+assignment+"\n/bin/sh -c 'exit 2'\n")
+			log, _, err := runStartupStep(t, shell, home, check+"\necho commands-ran\n", nil, false, false, "")
+			if err != nil || !strings.Contains(log, "commands-ran") || !strings.Contains(log, "Startup returned status 2; continuing") {
+				t.Fatalf("nonzero startup probe: %v %s", err, log)
+			}
+		})
+	}
+}
+
+func TestInitializedCommandsFailFast(t *testing.T) {
+	for _, shell := range []string{"tcsh", "csh", "bash", "sh"} {
+		for _, failure := range []string{"/bin/sh -c 'exit 7'", "echo block-start\n/bin/sh -c 'exit 7'"} {
+			t.Run(shell+"/"+failure, func(t *testing.T) {
+				home := t.TempDir()
+				assignment := "local_value=preserved"
+				if isCShell(shell) {
+					assignment = "set local_value = preserved"
+				}
+				commands := []string{assignment, "echo $local_value", failure, "echo must-not-run"}
+				log, _, err := runStartupStep(t, shell, home, "", nil, false, false, "", commands)
+				status, ok := err.(*exec.ExitError)
+				if !ok || status.ExitCode() != 7 || strings.Contains(log, "must-not-run") || !strings.Contains(log, "preserved") {
+					t.Fatalf("command failure lost: %v %s", err, log)
 				}
 			})
 		}
@@ -137,7 +173,7 @@ func writeStartupFile(t *testing.T, path, data string) {
 }
 
 // Exercise the actual generated wrapper on execution-node values without LSF.
-func runStartupStep(t *testing.T, shell, home, commands string, env map[string]string, clone, disable bool, secret string) (string, string, error) {
+func runStartupStep(t *testing.T, shell, home, commands string, env map[string]string, clone, disable bool, secret string, yamlCommands ...[]string) (string, string, error) {
 	t.Helper()
 	path, err := exec.LookPath(shell)
 	if err != nil {
@@ -147,7 +183,15 @@ func runStartupStep(t *testing.T, shell, home, commands string, env map[string]s
 	if err != nil {
 		t.Fatal(err)
 	}
-	spec := testSpec(t, "kind: pipeline\ntype: lsf\nclone: {disable: true}\nsteps:\n- name: test\n  commands: [echo placeholder]\n")
+	items := []string{"echo placeholder"}
+	if len(yamlCommands) != 0 {
+		items = yamlCommands[0]
+	}
+	encoded, err := json.Marshal(items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := testSpec(t, "kind: pipeline\ntype: lsf\nclone: {disable: true}\nsteps:\n- name: test\n  commands: "+string(encoded)+"\n")
 	step := spec.Steps[0]
 	for key, value := range env {
 		step.Envs[key] = value
@@ -156,7 +200,10 @@ func runStartupStep(t *testing.T, shell, home, commands string, env map[string]s
 		step.Secrets = append(step.Secrets, &engine.SecretVar{Name: "test-secret", Env: "FROM_SECRET"})
 		spec.Secrets = append(spec.Secrets, &engine.Secret{Metadata: engine.Metadata{Name: "test-secret"}, Data: secret})
 	}
-	spec.Files[0].Data = []byte(commands)
+	if len(yamlCommands) == 0 {
+		spec.Files[0].Data = []byte(commands)
+		delete(spec.Files[0].Metadata.Labels, commandsLabel)
+	}
 	if clone {
 		spec.Files[0].Metadata.Labels["lsf.drone.io/clone"] = "true"
 	}

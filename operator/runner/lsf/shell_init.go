@@ -33,7 +33,9 @@ func shellStartupArgs(shell string, initialize bool) ([]string, error) {
 	if err == nil && initialize && isCShell(shell) {
 		// Let the installed shell select system and personal rc files using its
 		// native rules (.tcshrc before .cshrc for tcsh), exactly once.
-		args = []string{shell, "-e"}
+		// Personal rc files commonly contain probes with nonzero status. tcsh
+		// cannot toggle -e in-place, so commands get explicit boundary checks.
+		args = []string{shell}
 	}
 	return args, err
 }
@@ -46,23 +48,24 @@ func shellStartupScript(shell string, initialize, clone bool, keys []string, com
 		fmt.Fprintf(&s, "export BASH_ENV=\"${%sBASH_ENV}\" ENV=\"${%sENV}\"\nunset %sBASH_ENV %sENV\n", shellEnvPrefix, shellEnvPrefix, shellEnvPrefix, shellEnvPrefix)
 	}
 	if initialize && !csh {
+		s.WriteString("set +e\n")
 		file := ".profile"
 		if filepath.Base(shell) == "bash" {
 			file = ".bashrc"
 		}
-		fmt.Fprintf(&s, "if [ -n \"${HOME:-}\" ] && [ -f \"$HOME/%s\" ]; then\n  printf '%%s\\n' \"[environment] Loading $HOME/%s\"\n  . \"$HOME/%s\"\nfi\n", file, file, file)
+		fmt.Fprintf(&s, "if [ -n \"${HOME:-}\" ] && [ -f \"$HOME/%s\" ]; then\n  printf '%%s\\n' \"[environment] Loading $HOME/%s\"\n  . \"$HOME/%s\"\n  __drone_lsf_rc_status=$?\n  if [ \"$__drone_lsf_rc_status\" -ne 0 ]; then printf '[environment] Startup returned status %%s; continuing\\n' \"$__drone_lsf_rc_status\"; fi\n  unset __drone_lsf_rc_status\nfi\n", file, file, file)
 	}
 	if csh {
 		// Rc files sometimes enable tracing. Turn it off before copying secrets.
-		// tcsh's exit inside an rc file returns from source; preserve its status.
-		s.WriteString("if ($status != 0) exit $status\nunset echo verbose\nunsetenv DRONE_LSF_CLONE_NETRC_HOME\n")
+		s.WriteString("set __drone_lsf_rc_status = $status\nunset echo verbose\n")
+		s.WriteString("if ($__drone_lsf_rc_status != 0) /usr/bin/printf '[environment] Startup returned status %s; continuing\\n' \"$__drone_lsf_rc_status\"\nunset __drone_lsf_rc_status\nunsetenv DRONE_LSF_CLONE_NETRC_HOME\n")
 	} else {
 		s.WriteString("set +x\nset +v\nset -e\nunset DRONE_LSF_CLONE_NETRC_HOME\n")
 	}
 	for i, key := range keys {
 		name := shellEnvName(i)
 		if csh {
-			fmt.Fprintf(&s, "setenv %s \"${%s:q}\"\nunsetenv %s\n", key, name, name)
+			fmt.Fprintf(&s, "setenv %s \"${%s:q}\"\nif ($status != 0) exit $status\nunsetenv %s\n", key, name, name)
 		} else {
 			fmt.Fprintf(&s, "export %s=\"${%s}\"\nunset %s\n", key, name, name)
 		}
@@ -75,7 +78,13 @@ func shellStartupScript(shell string, initialize, clone bool, keys []string, com
 		return "\"${" + shellEnvPrefix + name + "}\""
 	}
 	s.WriteString("cd " + ref("WORKDIR") + "\n")
+	if csh {
+		s.WriteString("if ($status != 0) exit $status\n")
+	}
 	s.WriteString("/usr/bin/printf '' > " + ref("READY") + "\n")
+	if csh {
+		s.WriteString("if ($status != 0) exit $status\n")
+	}
 	if csh {
 		s.WriteString("unsetenv " + shellEnvPrefix + "WORKDIR\nunsetenv " + shellEnvPrefix + "READY\n")
 	} else {

@@ -174,7 +174,7 @@ func TestAuthenticatedHTTPClone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writeStartupFile(t, filepath.Join(home, ".cshrc"), "setenv PATH "+quote(filepath.Dir(client)+":/usr/bin:/bin")+"\necho account-shell-ready\n")
+	writeStartupFile(t, filepath.Join(home, ".cshrc"), "/bin/sh -c 'exit 2'\nsetenv PATH "+quote(filepath.Dir(client)+":/usr/bin:/bin")+"\necho account-shell-ready\n/bin/sh -c 'exit 2'\n")
 	repo := t.TempDir()
 	runGit := func(args ...string) string {
 		cmd := exec.Command("git", args...)

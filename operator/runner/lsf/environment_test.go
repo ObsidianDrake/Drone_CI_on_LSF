@@ -83,6 +83,7 @@ steps:
 		"/bin/sh " + quote(parent),
 		"bsub -K -q test.q /bin/sh " + quote(child),
 	}))
+	delete(spec.Files[0].Metadata.Labels, commandsLabel)
 	var logs strings.Builder
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -127,6 +128,7 @@ func TestStepEnvironmentOverridesExecutionEnvironment(t *testing.T) {
 	step.Envs["PATH"] = "/step/bin:/usr/bin:/bin"
 	step.Envs["LSF_ENVDIR"] = "/step/conf"
 	spec.Files[0].Data = []byte("set -eu\ntest \"$HOME\" = " + quote(home) + "\ntest \"$PATH\" = /step/bin:/usr/bin:/bin\ntest \"$LSF_ENVDIR\" = /step/conf\ntest \"$NODE_SETTING\" = execution-node\necho overrides-ok\n")
+	delete(spec.Files[0].Metadata.Labels, commandsLabel)
 	step.Envs["SHELL_TYPE"] = "sh"
 	ctx := context.Background()
 	if err := e.Setup(ctx, spec); err != nil {

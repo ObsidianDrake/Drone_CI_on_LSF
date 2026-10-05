@@ -143,7 +143,11 @@ BSUB_OPTION: >-
 
 個人檔案不存在時略過。全程是非互動的批次執行，不開啟 terminal、不強制 login shell。設定檔若在非互動模式提早 return，後面的設定不會被載入；請將 EDA、License、LSF 等共用環境設定放在互動模式判斷之前，並將 `stty`、等待輸入等操作限制在互動模式內。
 
-初始化發生非零退出／命令失敗時，step 會失敗，log 顯示初始化未完成；tcsh 的 rc 內 `exit 0` 遵循其原生行為，表示成功返回該 rc 檔。初始化後會回到 step 的 workspace / `working_dir`，再執行 commands。一般 step 在同一個 shell 保留初始化的 alias、function 與 shell 變數；clone 僅接收匯出的環境變數，仍使用相容 Git 1.7.1 的 POSIX 腳本。
+初始化採一般 shell 模式，不因 rc 中環境偵測指令的非零狀態直接中止（例如 `grep` 找不到內容，或測試工具回傳 2）。tcsh/csh 啟動不加 `-e`；bash/sh 載入個人 rc 前暫時 `set +e`。若 rc 最後回傳非零，log 記錄 `Startup returned status N; continuing`。tcsh 的 rc 內 `exit N` 遵循其原生行為，返回該 rc 檔；bash/sh 的 `exit` 或 rc 的 `exec` 若讓初始化程序提前結束，則仍視為初始化未完成。無法套用必要環境、回到 workspace 或寫入完成標記時，step 仍會失敗，錯誤訊息包含退出碼。
+
+初始化後會回到 step 的 workspace / `working_dir`，再執行 commands。一般 step 在同一個 shell 保留初始化的 alias、function 與 shell 變數；clone 僅接收匯出的環境變數，仍使用相容 Git 1.7.1 的 POSIX 腳本。
+
+啟用初始化時，tcsh/csh 在每一項 YAML `commands` 後檢查 `$status`，非零即停止 step 並保留退出碼；因此不需為了 command 失敗檢查而對 rc 加上 `-e`。單一多行 command 區塊以最後執行的指令狀態為準，若要在區塊中途遇錯即停，請在需要的位置加上 `if ($status != 0) exit $status`，或拆成多項 commands。bash/sh 在 rc 完成後恢復 `set -e`；clone 的 POSIX 腳本仍維持原本的錯誤處理。
 
 只在需要略過初始化時加入：
 
