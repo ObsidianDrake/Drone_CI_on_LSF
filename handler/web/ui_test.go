@@ -149,6 +149,7 @@ func TestNextBuildNumberSettingsUI(t *testing.T) {
 	}
 	script := `
  let a={active:true,counter:5000,next_build_number_editable:true},t={admin:true};
+ const repoSettingsUser=t;
  let v={timeout_hours:1,next_build_number:5001},calls=0,errors=0;
  function w(){calls++}function p(){errors++}function rp(x){return x}function y(x){return x}
  const save=` + string(save[1]) + `;
@@ -169,6 +170,65 @@ func TestNextBuildNumberSettingsUI(t *testing.T) {
   if(!field().disabled||payload().next_build_number!==undefined)throw new Error('disabled input submitted');
   calls=errors=0;save();if(calls!==1||errors!==0)throw new Error('unrelated settings blocked');
  }
+ `
+	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+}
+
+func TestNextBuildNumberSaveRequest(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node required for UI event validation")
+	}
+	u, err := newUIAssets("/drone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := u.cache.Load(u.main)
+	bundle := data.([]byte)
+	// Execute the actual submit closure: testing only its payload expression
+	// misses local variables that shadow the component's user or repository.
+	locals := regexp.MustCompile(`function cp\(e\)\{(var .*?),r=Object\(b.i\)`).FindSubmatch(bundle)
+	submit := regexp.MustCompile(`,w=(function\(\)\{.*?return function\(\)\{return e.apply\(this,arguments\)\}\}\(\)),y=`).FindSubmatch(bundle)
+	change := regexp.MustCompile(`,y=(function\(e\)\{return function\(t\)\{switch\(e\).*?\}\}\});return null===v`).FindSubmatch(bundle)
+	if len(locals) != 2 || len(submit) != 2 || len(change) != 2 {
+		t.Fatal("missing settings component or event handlers")
+	}
+	script := `
+ const e={user:{admin:true},repo:{active:true,counter:16,next_build_number_editable:true}};
+ ` + string(locals[1]) + `;
+ let v={timeout_hours:1,next_build_number:17},request,successes=0;
+ const c='org',s='qc',i={a:Object.assign},z={a:(obj,key,value)=>Object.assign(obj,{[key]:value})};
+ const O=update=>{v=update(v)},p=message=>{throw new Error(message)},h=()=>{successes++};
+ const l=repo=>{a=repo;v={...v,next_build_number:a.counter+1}};
+ const at=async(url,options)=>{
+   if(url!=='/api/repos/org/qc'||options.method!=='PATCH')throw new Error('wrong request');
+   request=JSON.parse(JSON.stringify(options.data));
+   return {...a,counter:request.next_build_number===undefined?a.counter:request.next_build_number-1};
+ };
+ // Drive the compiled async state machine across request and response states.
+ const m={a:fn=>fn},d={a:{mark:fn=>fn,wrap:async(fn)=>{
+   let done=false;const state={prev:0,next:0,stop(){done=true}};
+   while(!done){const result=fn(state);if(!done)state.sent=await result}
+ }}};
+ const w=` + string(submit[1]) + `,y=` + string(change[1]) + `;
+ (async()=>{
+   for(const value of ['21','1']){
+     y('next_build_number')({target:{value}});
+     await w();
+     if(request.next_build_number!==Number(value))throw new Error('edited build number omitted from request: '+JSON.stringify(request));
+     if(v.next_build_number!==Number(value))throw new Error('saved input reverted');
+   }
+   await w();
+   if('next_build_number' in request)throw new Error('unchanged number submitted');
+   for(const state of [{admin:false,active:true,editable:true},{admin:true,active:false,editable:true},{admin:true,active:true,editable:false}]){
+     t.admin=state.admin;a.active=state.active;a.next_build_number_editable=state.editable;
+     y('next_build_number')({target:{value:'21'}});await w();
+     if('next_build_number' in request)throw new Error('ineligible number submitted');
+   }
+   if(successes!==6)throw new Error('save completion missing');
+ })().catch(error=>{console.error(error);process.exit(1)});
  `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, out)
