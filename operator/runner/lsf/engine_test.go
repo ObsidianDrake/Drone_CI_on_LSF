@@ -680,7 +680,7 @@ steps:
 	}
 	for _, name := range []string{"a", "b", "c"} {
 		records := lines[name]
-		if len(records) < 7 {
+		if len(records) < 6 {
 			t.Fatalf("%s missing log records: %q", name, records)
 		}
 		for _, line := range records {
@@ -688,9 +688,9 @@ steps:
 				t.Fatalf("%s: artificial empty record: %q", name, records)
 			}
 		}
-		// Initial blank, three Debug lines, one intentional blank, environment
-		// diagnostic, then the first command. No extra empty log records.
-		if !strings.HasPrefix(records[3], "[Debug] LSF error:") || records[4] != "\n" || !strings.HasPrefix(records[5], "[environment] Shell:") || !strings.HasPrefix(records[6], "\x1b[32m+ ") {
+		// Initial blank, three Debug lines, one intentional blank, then the
+		// first command. No extra empty log records.
+		if !strings.HasPrefix(records[3], "[Debug] LSF error:") || records[4] != "\n" || !strings.HasPrefix(records[5], "\x1b[32m+ ") {
 			t.Fatalf("%s: inconsistent header spacing: %q", name, records)
 		}
 	}

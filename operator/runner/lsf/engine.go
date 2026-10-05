@@ -323,7 +323,6 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 	wrapper.WriteString("stderr_reader=$!\n")
 	// This is runner-owned state, never inherited from a parent build.
 	wrapper.WriteString("unset DRONE_LSF_CLONE_NETRC_HOME\n")
-	fmt.Fprintf(&wrapper, "printf '%%s\\n' %s\n", quote(fmt.Sprintf("[environment] Shell: %s; startup files: %t", shell, initialize)))
 	wrapper.WriteString("/usr/bin/env")
 	for i, key := range keys {
 		name := shellEnvName(i)
