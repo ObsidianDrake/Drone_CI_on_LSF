@@ -1,4 +1,4 @@
-# Internal POSIX sh script. Keep commands compatible with Git 1.8.3.1.
+# Internal POSIX sh script. Keep commands compatible with Git 1.7.1.
 set -eu
 
 fail() {
@@ -93,8 +93,10 @@ fi
 if ! has_commit && [ "$clone_depth" -gt 0 ] && [ -s .git/shallow ]; then
     require_ref
     printf '[clone] Commit missing from shallow history; fetching full history of %s (may download more data)\n' "$ref"
-    trace 'git fetch --no-tags --unshallow origin "$DRONE_COMMIT_REF"'
-    if git fetch --no-tags --unshallow origin "$ref"; then
+    # Git 1.7.1 has no --unshallow. The protocol's maximum depth requests
+    # complete history and is also understood by newer Git clients.
+    trace 'git fetch --no-tags --depth=2147483647 origin "$DRONE_COMMIT_REF"'
+    if git fetch --no-tags --depth=2147483647 origin "$ref"; then
         printf '[clone] Full-history fetch succeeded\n'
     else
         fetch_status=$?
@@ -104,8 +106,12 @@ if ! has_commit && [ "$clone_depth" -gt 0 ] && [ -s .git/shallow ]; then
 fi
 
 has_commit || fail "Expected commit $sha is unavailable; refusing to checkout a different commit (the ref may have moved or been deleted)"
-trace 'git -c advice.detachedHead=false checkout --force --detach "$DRONE_COMMIT_SHA"'
-git -c advice.detachedHead=false checkout --force --detach "$sha"
+# Git 1.7.1 has neither git -c nor checkout --detach. Config is repository
+# local, and checkout of a validated full commit SHA detaches HEAD itself.
+trace 'git config --file .git/config advice.detachedHead false'
+git config --file .git/config advice.detachedHead false
+trace 'git checkout --force "$DRONE_COMMIT_SHA"'
+git checkout --force "$sha"
 trace 'git rev-parse --verify HEAD'
 actual=$(git rev-parse --verify HEAD)
 [ "$actual" = "$sha" ] || fail "HEAD $actual does not match expected commit $sha"

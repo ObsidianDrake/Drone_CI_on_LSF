@@ -15,7 +15,7 @@ import (
 )
 
 // Exercise the generated script over real smart HTTP, not file:// or a fake
-// fetch. DRONE_TEST_LEGACY_GIT enables the same cases with Git 1.8.3.1 in CI.
+// fetch. CI supplies real Git 1.7.1 and 1.8.3.1 clients as well.
 func TestNativeCloneHTTPCompatibility(t *testing.T) {
 	modern, err := exec.LookPath("git")
 	if err != nil {
@@ -41,10 +41,18 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 	git(repo, "init", "--bare")
 	work := t.TempDir()
 	git(work, "init", "-b", "main")
-	git(work, "commit", "--allow-empty", "-m", "first")
+	commit := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(work, "version.txt"), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		git(work, "add", "version.txt")
+		git(work, "commit", "-m", content)
+	}
+	commit("first")
 	first := git(work, "rev-parse", "HEAD")
 	git(work, "tag", "-a", "v1", "-m", "annotated tag")
-	git(work, "commit", "--allow-empty", "-m", "second")
+	commit("second")
 	tip := git(work, "rev-parse", "HEAD")
 	git(work, "push", repo, "main", "refs/tags/v1", "HEAD:refs/pull/7/head")
 	backend := filepath.Join(git(work, "--exec-path"), "git-http-backend")
@@ -69,19 +77,23 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 	}))
 	defer denied.Close()
 
-	for _, client := range []struct{ name, path string }{{"current", modern}, {"1.8.3.1", os.Getenv("DRONE_TEST_LEGACY_GIT")}} {
+	for _, client := range []struct{ name, path, env string }{
+		{"current", modern, ""},
+		{"1.7.1", os.Getenv("DRONE_TEST_GIT_1_7_1"), "DRONE_TEST_GIT_1_7_1"},
+		{"1.8.3.1", os.Getenv("DRONE_TEST_LEGACY_GIT"), "DRONE_TEST_LEGACY_GIT"},
+	} {
 		t.Run(client.name, func(t *testing.T) {
 			if client.path == "" {
-				t.Skip("set DRONE_TEST_LEGACY_GIT to test Git 1.8.3.1")
+				t.Skipf("set %s to test Git %s", client.env, client.name)
 			}
 			clientPath, err := filepath.Abs(client.path)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if client.name == "1.8.3.1" {
+			if client.name != "current" {
 				out, err := exec.Command(clientPath, "--version").CombinedOutput()
-				if err != nil || strings.TrimSpace(string(out)) != "git version 1.8.3.1" {
-					t.Fatalf("expected real Git 1.8.3.1: %v %s", err, out)
+				if err != nil || strings.TrimSpace(string(out)) != "git version "+client.name {
+					t.Fatalf("expected real Git %s: %v %s", client.name, err, out)
 				}
 			}
 			for _, tc := range []struct {
@@ -152,6 +164,19 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 					if head := git(dir, "rev-parse", "HEAD"); head != tc.sha {
 						t.Fatalf("HEAD=%s, want %s\n%s", head, tc.sha, out)
 					}
+					if head, err := os.ReadFile(filepath.Join(dir, ".git", "HEAD")); err != nil || strings.TrimSpace(string(head)) != tc.sha {
+						t.Fatalf("HEAD must be detached at %s: %v %s", tc.sha, err, head)
+					}
+					wantContent := "second"
+					if tc.sha == first {
+						wantContent = "first"
+					}
+					if data, err := os.ReadFile(filepath.Join(dir, "version.txt")); err != nil || string(data) != wantContent {
+						t.Fatalf("checkout content = %q, want %q: %v", data, wantContent, err)
+					}
+					if client.name != "current" && strings.HasSuffix(tc.name, "shallow-advanced") && git(dir, "rev-list", "--count", "FETCH_HEAD") != "2" {
+						t.Fatal("full-history fetch did not restore branch history")
+					}
 					if !strings.Contains(string(out), "[clone] Verified HEAD: "+tc.sha) {
 						t.Fatalf("missing commit verification\n%s", out)
 					}
@@ -160,8 +185,8 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 							t.Fatalf("account netrc changed: %v", err)
 						}
 					}
-					if client.name == "1.8.3.1" {
-						if !strings.Contains(string(out), "no such remote ref "+tc.sha) || !strings.Contains(string(out), "Ref fetch succeeded") {
+					if client.name != "current" {
+						if !strings.Contains(string(out), "SHA fetch exited") || !strings.Contains(string(out), "Ref fetch succeeded") {
 							t.Fatalf("legacy HTTP clone did not exercise ref fallback\n%s", out)
 						}
 						if strings.HasSuffix(tc.name, "shallow-advanced") && !strings.Contains(string(out), "Full-history fetch succeeded") {

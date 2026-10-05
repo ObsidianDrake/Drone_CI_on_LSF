@@ -52,14 +52,16 @@ jobs:
 
       # UBI's public repositories do not provide tcsh. Run the LSF integration
       # tests on the host; the release binary above is still built only in UBI 8.
-      - name: Prepare tcsh and legacy Git test client
+      - name: Prepare tcsh and legacy Git test clients
         run: |
           sudo apt-get update
           sudo apt-get install -y tcsh build-essential libcurl4-openssl-dev libexpat1-dev zlib1g-dev
+          bash scripts/build-test-git-1.7.1.sh "$RUNNER_TEMP/git-1.7.1"
           bash scripts/build-test-git-1.8.3.1.sh "$RUNNER_TEMP/git-1.8.3.1"
 
       - name: Test LSF engine and HTTP clone compatibility
         env:
+          DRONE_TEST_GIT_1_7_1: ${{ runner.temp }}/git-1.7.1/bin/git
           DRONE_TEST_LEGACY_GIT: ${{ runner.temp }}/git-1.8.3.1/bin/git
         run: |
           go test -mod=readonly -race ./internal/pipelineruntime ./operator/runner/lsf ./operator/runner
