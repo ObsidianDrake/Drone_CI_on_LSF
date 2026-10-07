@@ -97,6 +97,9 @@ func adaptMain(data []byte, base string) ([]byte, error) {
 	if historyErr == nil {
 		data, historyErr = adaptTrends(data)
 	}
+	if historyErr == nil {
+		data, historyErr = adaptNewBuild(data)
+	}
 	if historyErr != nil {
 		return nil, historyErr
 	}
