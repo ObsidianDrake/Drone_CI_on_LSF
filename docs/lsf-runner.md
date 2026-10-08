@@ -254,6 +254,8 @@ Server 本機的 `bsub`／`bjobs`／`bkill` 仍使用 server 環境，並固定 
 
 Git 2.8 + libcurl 7.19.7 已針對 194 字元 token 測試。askpass 繞過 `.netrc` parser 的約 63 字元限制，但舊 libcurl 的其他認證介面仍可能有 255 字元限制，不能視為支援任意長度 token。若 token 更長，應選用連結較新版 libcurl 的 Git。
 
+有 Drone HTTP 認證的 clone Git subprocess 會隔離 HOME、XDG 與 system/global Git config，避免繼承帳號的 credential helper；不使用 Git 2.8 尚不支援的空 `credential.helper` 重設語法。這也表示 system/global Git config 中的 CA、proxy 等設定不會套用；需要時請在節點 rc 或明確的 environment 設定 `GIT_SSL_CAINFO`、`https_proxy` 等環境變數。shell 初始化與 PATH 選擇 Git 的流程不變，一般 command steps 仍使用原本的 Git config。
+
 Step 可在節點 rc 設定好 LSF client 後提交巢狀 job，例如 `bsub -q test.q sleep 10`。若 step 需要等待子 job 完成並採用其 exit code，可用 `bsub -K -q test.q sleep 10`；普通 `bsub` 提交成功就返回。巢狀 bsub 由 commands 自行控制環境傳遞；未指定 `-env` 時可能繼承該 step 初始化後的環境，跨 OS 子 job 仍需自行處理。Runner 的取消 / detach 收尾仍只管理它直接提交的 step jobs。
 
 ## 初版範圍

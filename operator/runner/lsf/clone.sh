@@ -29,10 +29,15 @@ git() {
             # Git's verbose HTTP diagnostics can contain Authorization headers.
             unset GIT_CURL_VERBOSE GIT_TRACE GIT_TRACE_CURL GIT_TRACE_PACKET GIT_TRACE_SETUP GIT_TRACE2 GIT_TRACE2_EVENT GIT_TRACE2_PERF GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
             export HOME="$DRONE_LSF_CLONE_AUTH_DIR/home"
+            # Git 2.8 treats an empty credential.helper as a helper named "".
+            # Isolate config sources instead of using the newer reset syntax.
+            # HOME alone does not isolate an explicitly inherited XDG path.
+            export XDG_CONFIG_HOME="$HOME/.config"
+            export GIT_CONFIG_NOSYSTEM=1
             export GIT_CONFIG_GLOBAL=/dev/null
             export GIT_ASKPASS="$DRONE_LSF_CLONE_AUTH_DIR/askpass"
             export GIT_TERMINAL_PROMPT=0 LC_ALL=C
-            exec "$clone_git" -c credential.helper= -c credential.useHttpPath=false "$@"
+            exec "$clone_git" -c credential.useHttpPath=false "$@"
         )
     else
         "$clone_git" "$@"
