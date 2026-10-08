@@ -103,21 +103,21 @@ steps:
 
 ### 混合 RHEL6 / RHEL7 / RHEL8 節點的 clone
 
-自動 clone 與 `image: git` 共用相容流程，不要求固定 RHEL8 節點：
+自動 clone 與 `image: git` 共用流程，最低支援 Git 2.8。Production 的 RHEL6 / RHEL7 使用 Git 2.8.0，RHEL8 使用 Git 2.43.0；執行檔由 shell 初始化後的 PATH 選定，不硬編碼安裝路徑。Git 版本不足時會在連線前明確報錯。
 
 1. 印出 hostname、OS、Git 執行檔路徑、版本與預期 commit SHA。
 2. 優先 `git fetch --no-tags [--depth=N] origin "$DRONE_COMMIT_SHA"`。
-3. 若失敗，保留 Git 原始錯誤並記錄 exit code，再以完整的 `DRONE_COMMIT_REF`（branch、tag 或遠端提供的 PR ref）fetch 一次。此路徑支援 Git 1.7.1 / 1.8.3.1 的 HTTP fetch。
-4. 若指定 SHA 仍不在本地、且 repository 是設定 depth 後的 shallow repository，對同一 ref 執行一次 `--depth=2147483647`，取得完整歷史；此寫法相容 Git 1.7.1，不依賴較新的 `--unshallow`，log 會提示可能增加下載量。
-5. 驗證指定 SHA 是 commit，以 `git checkout --force "$DRONE_COMMIT_SHA"` detached checkout 該 SHA，再確認 `HEAD` 完全一致。不使用 Git 1.7.1 不支援的 `git -c` 或 `checkout --detach`；detached HEAD 提示設定只寫入 workspace 的 `.git/config`。絕不以最新 branch tip 或 `FETCH_HEAD` 取代預期 SHA。
+3. 若失敗，保留 Git 原始錯誤並記錄 exit code，再以完整的 `DRONE_COMMIT_REF`（branch、tag 或遠端提供的 PR ref）fetch 一次。此 fallback 用來處理遠端不接受直接抓取 SHA 的情況。
+4. 若指定 SHA 仍不在本地、且 repository 是設定 depth 後的 shallow repository，對同一 ref 執行一次 `--unshallow`，取得完整歷史，log 會提示可能增加下載量。
+5. 驗證指定 SHA 是 commit，以 `git -c advice.detachedHead=false checkout --detach --force "$DRONE_COMMIT_SHA"` checkout 該 SHA，再確認 `HEAD` 完全一致。絕不以最新 branch tip 或 `FETCH_HEAD` 取代預期 SHA。
 
 Ref fallback 必須有合法的完整 `DRONE_COMMIT_REF`；不會猜測 `master`、`main` 或 PR 的 target branch。若 ref 被刪除、force-push 後原 commit 無法取得、認證失敗或遠端無法提供物件，clone 會失敗並停止後續 steps。沒有無限重試，也不會預先抓取所有 branches / tags。SHA fetch 的原始錯誤即使後續 fallback 成功仍會保留；最終成功以 `Verified HEAD` 及 step exit code 為準。
 
-原生 clone 先透過 `SHELL_TYPE` / `DRONE_LSF_SHELL` 選定的 shell 初始化環境，再將匯出的環境交給固定的 `/bin/sh` 執行 clone 腳本，以明確處理 fetch 失敗。停用初始化且未設定 `SHELL_OPTION` 時，clone 直接使用 `/bin/sh`，不要求初始化 shell 存在。有指定 options 時仍會啟動所選 shell，options 只作用於這一層，不會轉傳給 clone 的 POSIX 腳本。既有 netrc、SSL verify 與 LSF resource 設定照常生效。
+原生 clone 先透過 `SHELL_TYPE` / `DRONE_LSF_SHELL` 選定的 shell 初始化環境，再將匯出的環境交給固定的 `/bin/sh` 執行 clone 腳本，以明確處理 fetch 失敗。停用初始化且未設定 `SHELL_OPTION` 時，clone 直接使用 `/bin/sh`，不要求初始化 shell 存在。有指定 options 時仍會啟動所選 shell，options 只作用於這一層，不會轉傳給 clone 的 POSIX 腳本。Drone 提供的 HTTP 認證由專用 askpass 處理；SSL verify 與 LSF resource 設定照常生效。
 
 Clone 在執行主要 Git 指令前，以與一般 steps 相同的綠色 `+ command` 顯示指令；ref fallback 與完整歷史補抓只在實際執行時顯示。指令中的 URL、SHA、ref 使用原本的環境變數名稱呈現，避免 trace 展開 URL 中可能存在的認證資訊；`[clone]` 診斷與結果仍保留。
 
-CI 使用實際的新版 Git、upstream Git 1.7.1 與 1.8.3.1，透過 smart HTTP 測試 branch、分支前進、shallow history、annotated tag、PR ref、HTTP 認證、缺少 commit / ref 與拒絕存取，並確認 HEAD 處於 detached 狀態；LSF 生命週期使用 mock 驗證。舊版 Git 僅安裝於 CI 暫存目錄，不隨 server 發布，也不取代系統 Git。此支援針對執行節點的 clone client，不代表 server binary 可在 RHEL6 執行。公司 RHEL 套件的 backport、TLS / libcurl 與 Gitea 設定仍需於實際環境驗證。
+CI 使用 upstream Git 2.8.0（連結實際 libcurl 7.19.7）、Git 2.43.0 與目前 Git，透過 smart HTTP 測試 branch、分支前進、shallow history、annotated tag、PR ref、194 字元 token、錯誤認證、缺少 commit / ref 與拒絕存取，並確認 HEAD 處於 detached 狀態。另以 curl 7.19.7 重現相同長 token 在 `.netrc` 下得到 HTTP 401、直接提供認證時得到 HTTP 200。測試工具只安裝於 CI 暫存目錄；舊 libcurl 為 HTTP-only 測試 build，不隨 server 發布，也不取代系統 Git / libcurl。LSF 生命週期使用 mock 驗證；Production 的 RHEL backport、TLS 與 Gitea 設定仍需 UAT 驗證。
 
 頂層 environment 作為各 step 的預設值；step environment 可覆寫，支援 YAML anchor 與 `from_secret`。`BSUB_OPTION` 會依引號拆成參數直接傳給 bsub，例如：
 
@@ -145,7 +145,7 @@ BSUB_OPTION: >-
 
 初始化預設採一般 shell 模式，不因 rc 中環境偵測指令的非零狀態直接中止（例如 `grep` 找不到內容，或測試工具回傳 2）。tcsh/csh 預設不加 `-e`，使用者可透過 `SHELL_OPTION` 明確指定；bash/sh 載入個人 rc 前暫時 `set +e`。若 rc 最後回傳非零，log 記錄 `Startup returned status N; continuing`。tcsh 的 rc 內 `exit N` 遵循其原生行為，返回該 rc 檔；bash/sh 的 `exit` 或 rc 的 `exec` 若讓初始化程序提前結束，則仍視為初始化未完成。無法套用必要環境、回到 workspace 或寫入完成標記時，step 仍會失敗，錯誤訊息包含退出碼。
 
-初始化後會回到 step 的 workspace / `working_dir`，再執行 commands。一般 step 在同一個 shell 保留初始化的 alias、function 與 shell 變數；clone 僅接收匯出的環境變數，仍使用相容 Git 1.7.1 的 POSIX 腳本。
+初始化後會回到 step 的 workspace / `working_dir`，再執行 commands。一般 step 在同一個 shell 保留初始化的 alias、function 與 shell 變數；clone 僅接收匯出的環境變數，使用要求 Git 2.8 以上的 POSIX 腳本。
 
 啟用初始化時，tcsh/csh 在每一項 YAML `commands` 後檢查 `$status`，非零即停止 step 並保留退出碼；因此不需為了 command 失敗檢查而對 rc 加上 `-e`。單一多行 command 區塊以最後執行的指令狀態為準，若要在區塊中途遇錯即停，請在需要的位置加上 `if ($status != 0) exit $status`，或拆成多項 commands。bash/sh 在 rc 完成後恢復 `set -e`；clone 的 POSIX 腳本仍維持原本的錯誤處理。
 
@@ -248,14 +248,18 @@ Server 本機的 `bsub`／`bjobs`／`bkill` 仍使用 server 環境，並固定 
 
 修改 server 的啟動環境需要重啟 server；節點 rc 在每個新 step 啟動時重新讀取。`DRONE_RUNNER_ENVIRON` 仍是初始化後的全域覆寫，若其中有 RHEL 8 專用路徑，請移到節點 rc，避免再次覆寫節點設定。初始化建立的 aliases、functions 與 shell 變數可供一般 commands 使用。
 
-一般 commands 預設使用帳號原本的 `HOME`、Git config 與認證。原生 clone 也先讀取帳號本人的 shell 設定；有 Drone HTTP 認證時，只有該 clone 的 Git subprocess 使用暫存 HOME / netrc，確保 Git 1.7.1 / 1.8.3.1 相容且不覆蓋帳號的 `~/.netrc`。沒有 CI 認證時，clone Git 也使用初始化與明確設定完成後的 HOME。
+一般 commands 預設使用帳號原本的 `HOME`、Git config 與認證。原生 clone 也先讀取帳號本人的 shell 設定；有 Drone HTTP 認證時，只有該 clone 的 Git subprocess 使用隔離 HOME 與 `GIT_ASKPASS`。認證不經過 `.netrc`，以避開 RHEL6 舊 libcurl 對長 username / password 的截斷；Gitea 使用一般帳號名稱搭配 token password。沒有 CI 認證時，clone Git 使用初始化與明確設定完成後的 HOME。
+
+認證檔保存在 step 專用 `clone-auth` 目錄（0700），username / password 檔案為 0600；askpass 僅接受原 clone URL 的 scheme / host / port，且以 `LC_ALL=C` 固定 Git prompt 格式。runner 不將 token 放入 remote URL、command line 或 wrapper 腳本；認證模式會停用繼承的 credential helper、Git HTTP tracing 與互動終端 fallback。clone 正常結束、失敗、shell 初始化失敗或確認 job 已停止後都會清除認證，Debug 模式也不保留。LSF 尚未確認終止的 job 維持既有保留規則，避免刪除仍在使用的檔案。
+
+Git 2.8 + libcurl 7.19.7 已針對 194 字元 token 測試。askpass 繞過 `.netrc` parser 的約 63 字元限制，但舊 libcurl 的其他認證介面仍可能有 255 字元限制，不能視為支援任意長度 token。若 token 更長，應選用連結較新版 libcurl 的 Git。
 
 Step 可在節點 rc 設定好 LSF client 後提交巢狀 job，例如 `bsub -q test.q sleep 10`。若 step 需要等待子 job 完成並採用其 exit code，可用 `bsub -K -q test.q sleep 10`；普通 `bsub` 提交成功就返回。巢狀 bsub 由 commands 自行控制環境傳遞；未指定 `-env` 時可能繼承該 step 初始化後的環境，跨 OS 子 job 仍需自行處理。Runner 的取消 / detach 收尾仍只管理它直接提交的 step jobs。
 
 ## 初版範圍
 
 - 支援 `commands`、`environment`（含 `from_secret`）、`when`、`depends_on`、`failure: ignore`；`working_dir` 可指定 workspace 內已存在的相對子目錄。
-- 自動 clone 使用 `git init`、fetch 並 checkout build commit SHA，支援 `clone.depth`、`clone.skip_verify` 與 Drone 提供的 HTTP netrc；尚未涵蓋 clone plugin 的 submodule、Git LFS 或 pull request 自動 merge 行為。
+- 自動 clone 使用 `git init`、fetch 並 checkout build commit SHA，支援 `clone.depth`、`clone.skip_verify` 與 Drone 提供的 HTTP 認證；尚未涵蓋 clone plugin 的 submodule、Git LFS 或 pull request 自動 merge 行為。
 - `image` 僅支援省略、`none` 或 clone 專用的 `git`；不支援其他容器 image、容器 plugin settings、services、volumes、privileged、Docker network、container user、每個 step 的 Docker resources 或自訂 workspace 路徑。設定這些欄位會報錯，避免誤以為容器功能已生效。資源需求透過 `BSUB_OPTION` 或 runner 層級的預設設定提供。
 - 沒有 LSF job arrays、互動工作或依賴 LSF 自己排 step 的功能；step 相依性由 Drone runtime 管理。
 - 已以本機 mock 驗證，尚未連線公司 LSF 叢集驗證 wrapper、共享檔案系統與權限配置。

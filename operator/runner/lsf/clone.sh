@@ -1,4 +1,4 @@
-# Internal POSIX sh script. Keep commands compatible with Git 1.7.1.
+# Internal POSIX sh script. Requires Git 2.8 or later.
 set -eu
 
 fail() {
@@ -13,11 +13,27 @@ trace() {
 }
 
 # Preserve the step's inherited HOME. Only native clone Git subprocesses use
-# the private CI netrc; never overwrite the account's ~/.netrc or Git config.
+# private CI askpass; never overwrite the account's ~/.netrc or Git config.
+cleanup_auth() {
+    if [ -n "${DRONE_LSF_CLONE_AUTH_DIR:-}" ]; then
+        /bin/rm -rf -- "$DRONE_LSF_CLONE_AUTH_DIR"
+    fi
+}
+trap cleanup_auth EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 clone_git=$(command -v git)
 git() {
-    if [ -n "${DRONE_LSF_CLONE_NETRC_HOME:-}" ]; then
-        HOME=$DRONE_LSF_CLONE_NETRC_HOME "$clone_git" "$@"
+    if [ -n "${DRONE_LSF_CLONE_AUTH_DIR:-}" ]; then
+        (
+            # Git's verbose HTTP diagnostics can contain Authorization headers.
+            unset GIT_CURL_VERBOSE GIT_TRACE GIT_TRACE_CURL GIT_TRACE_PACKET GIT_TRACE_SETUP GIT_TRACE2 GIT_TRACE2_EVENT GIT_TRACE2_PERF GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
+            export HOME="$DRONE_LSF_CLONE_AUTH_DIR/home"
+            export GIT_CONFIG_GLOBAL=/dev/null
+            export GIT_ASKPASS="$DRONE_LSF_CLONE_AUTH_DIR/askpass"
+            export GIT_TERMINAL_PROMPT=0 LC_ALL=C
+            exec "$clone_git" -c credential.helper= -c credential.useHttpPath=false "$@"
+        )
     else
         "$clone_git" "$@"
     fi
@@ -31,7 +47,11 @@ elif [ -r /etc/os-release ]; then
 fi
 printf '[clone] Git executable: %s\n' "$clone_git"
 trace 'git --version'
-git --version
+git_version=$("$clone_git" --version)
+printf '%s\n' "$git_version"
+if ! printf '%s\n' "$git_version" | awk '{split($3,v,"."); exit !(v[1]>2 || (v[1]==2 && v[2]>=8))}'; then
+    fail 'Git 2.8 or newer is required; check PATH in the selected shell startup file'
+fi
 
 sha=${DRONE_COMMIT_SHA:-}
 case "$sha" in
@@ -93,10 +113,8 @@ fi
 if ! has_commit && [ "$clone_depth" -gt 0 ] && [ -s .git/shallow ]; then
     require_ref
     printf '[clone] Commit missing from shallow history; fetching full history of %s (may download more data)\n' "$ref"
-    # Git 1.7.1 has no --unshallow. The protocol's maximum depth requests
-    # complete history and is also understood by newer Git clients.
-    trace 'git fetch --no-tags --depth=2147483647 origin "$DRONE_COMMIT_REF"'
-    if git fetch --no-tags --depth=2147483647 origin "$ref"; then
+    trace 'git fetch --no-tags --unshallow origin "$DRONE_COMMIT_REF"'
+    if git fetch --no-tags --unshallow origin "$ref"; then
         printf '[clone] Full-history fetch succeeded\n'
     else
         fetch_status=$?
@@ -106,12 +124,8 @@ if ! has_commit && [ "$clone_depth" -gt 0 ] && [ -s .git/shallow ]; then
 fi
 
 has_commit || fail "Expected commit $sha is unavailable; refusing to checkout a different commit (the ref may have moved or been deleted)"
-# Git 1.7.1 has neither git -c nor checkout --detach. Config is repository
-# local, and checkout of a validated full commit SHA detaches HEAD itself.
-trace 'git config --file .git/config advice.detachedHead false'
-git config --file .git/config advice.detachedHead false
-trace 'git checkout --force "$DRONE_COMMIT_SHA"'
-git checkout --force "$sha"
+trace 'git -c advice.detachedHead=false checkout --detach --force "$DRONE_COMMIT_SHA"'
+git -c advice.detachedHead=false checkout --detach --force "$sha"
 trace 'git rev-parse --verify HEAD'
 actual=$(git rev-parse --verify HEAD)
 [ "$actual" = "$sha" ] || fail "HEAD $actual does not match expected commit $sha"

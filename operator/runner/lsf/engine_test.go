@@ -160,11 +160,11 @@ steps:
 func TestAuthenticatedHTTPClone(t *testing.T) {
 	e := testEngine(t)
 	// Both the native clone and command step initialize from the account HOME.
-	// In CI, select real Git 1.7.1 via the rc file, including HTTP netrc auth.
+	// In CI, select real Git 2.8 via the rc file, including long-token HTTP auth.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("LSF_MOCK_EXEC_HOME", home)
-	client := os.Getenv("DRONE_TEST_GIT_1_7_1")
+	client := os.Getenv("DRONE_TEST_GIT_2_8")
 	if client == "" {
 		var err error
 		client, err = exec.LookPath("git")
@@ -198,7 +198,7 @@ func TestAuthenticatedHTTPClone(t *testing.T) {
 	files := http.FileServer(http.Dir(filepath.Join(repo, ".git")))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, password, ok := r.BasicAuth()
-		if !ok || user != "test-token" || password != "x-oauth-basic" {
+		if !ok || user != "ci-user" || password != strings.Repeat("t", 194) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -217,7 +217,7 @@ steps:
 - name: verify
   commands:
   - cat tracked
-`, transform.WithEnviron(map[string]string{"DRONE_REMOTE_URL": server.URL, "DRONE_COMMIT_REF": "refs/heads/main", "DRONE_COMMIT_SHA": sha, "GIT_TERMINAL_PROMPT": "0"}), transform.WithNetrc(address.Hostname(), "test-token", "x-oauth-basic"))
+`, transform.WithEnviron(map[string]string{"DRONE_REMOTE_URL": server.URL, "DRONE_COMMIT_REF": "refs/heads/main", "DRONE_COMMIT_SHA": sha, "GIT_TERMINAL_PROMPT": "0"}), transform.WithNetrc(address.Hostname(), "ci-user", strings.Repeat("t", 194)))
 	var logs strings.Builder
 	err = runtime.New(runtime.WithEngine(e), runtime.WithConfig(spec), runtime.WithHooks(&runtime.Hook{
 		GotLine: func(_ *runtime.State, l *runtime.Line) error { logs.WriteString(l.Message); return nil },

@@ -58,9 +58,9 @@ func shellStartupScript(shell string, initialize, clone bool, keys []string, com
 	if csh {
 		// Rc files sometimes enable tracing. Turn it off before copying secrets.
 		s.WriteString("set __drone_lsf_rc_status = $status\nunset echo verbose\n")
-		s.WriteString("if ($__drone_lsf_rc_status != 0) /usr/bin/printf '[environment] Startup returned status %s; continuing\\n' \"$__drone_lsf_rc_status\"\nunset __drone_lsf_rc_status\nunsetenv DRONE_LSF_CLONE_NETRC_HOME\n")
+		s.WriteString("if ($__drone_lsf_rc_status != 0) /usr/bin/printf '[environment] Startup returned status %s; continuing\\n' \"$__drone_lsf_rc_status\"\nunset __drone_lsf_rc_status\nunsetenv DRONE_LSF_CLONE_NETRC_HOME\nunsetenv DRONE_LSF_CLONE_AUTH_DIR\n")
 	} else {
-		s.WriteString("set +x\nset +v\nset -e\nunset DRONE_LSF_CLONE_NETRC_HOME\n")
+		s.WriteString("set +x\nset +v\nset -e\nunset DRONE_LSF_CLONE_NETRC_HOME DRONE_LSF_CLONE_AUTH_DIR\n")
 	}
 	for i, key := range keys {
 		name := shellEnvName(i)

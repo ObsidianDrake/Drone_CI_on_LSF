@@ -257,21 +257,22 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 		env[prefix+"_WORKSPACE_BASE"] = p.workspace
 		env[prefix+"_WORKSPACE_PATH"] = ""
 	}
-	// Only native clone Git processes need the CI netrc. Ordinary commands
+	// Only native clone Git processes need CI credentials. Ordinary commands
 	// retain the account HOME, including its Git and LSF configuration.
 	delete(env, "DRONE_LSF_CLONE_NETRC_HOME")
+	delete(env, "DRONE_LSF_CLONE_AUTH_DIR")
+	authDir := filepath.Join(dir, "clone-auth")
+	created := false
+	defer func() {
+		if !created {
+			os.RemoveAll(authDir)
+		}
+	}()
 	if nativeClone && env["CI_NETRC_USERNAME"] != "" && env["CI_NETRC_PASSWORD"] != "" {
-		home := filepath.Join(dir, "home")
-		if err := os.Mkdir(home, 0700); err != nil {
+		if err := createCloneAuth(authDir, env["DRONE_REMOTE_URL"], env["CI_NETRC_MACHINE"], env["CI_NETRC_USERNAME"], env["CI_NETRC_PASSWORD"]); err != nil {
 			return err
 		}
-		// Keep ordinary tokens unquoted for older Git/libcurl netrc readers.
-		// Quote special characters to prevent additional entries.
-		netrc := fmt.Sprintf("machine %s login %s password %s\n", netrcToken(env["CI_NETRC_MACHINE"]), netrcToken(env["CI_NETRC_USERNAME"]), netrcToken(env["CI_NETRC_PASSWORD"]))
-		if err := os.WriteFile(filepath.Join(home, ".netrc"), []byte(netrc), 0600); err != nil {
-			return err
-		}
-		env["DRONE_LSF_CLONE_NETRC_HOME"] = home
+		env["DRONE_LSF_CLONE_AUTH_DIR"] = authDir
 	}
 	for _, prefix := range []string{"CI", "DRONE"} {
 		delete(env, prefix+"_NETRC_USERNAME")
@@ -308,7 +309,7 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 	wrapper.WriteString("(" + stderrReader(nativeClone) + ") < " + stderrPipe + " &\n")
 	wrapper.WriteString("stderr_reader=$!\n")
 	// This is runner-owned state, never inherited from a parent build.
-	wrapper.WriteString("unset DRONE_LSF_CLONE_NETRC_HOME\n")
+	wrapper.WriteString("unset DRONE_LSF_CLONE_NETRC_HOME DRONE_LSF_CLONE_AUTH_DIR\n")
 	wrapper.WriteString("/usr/bin/env")
 	for i, key := range keys {
 		name := shellEnvName(i)
@@ -333,19 +334,17 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 	}
 	wrapper.WriteString(" " + quote(startupPath) + " 2>" + stderrPipe + "\n")
 	wrapper.WriteString("command_status=$?\nwait \"$stderr_reader\"\n")
+	// Also covers startup failure before clone.sh executes its own cleanup.
+	if nativeClone {
+		wrapper.WriteString("/bin/rm -rf -- " + quote(authDir) + "\n")
+	}
 	wrapper.WriteString("if [ ! -f " + quote(readyPath) + " ]; then\n  printf '[environment] ERROR: shell initialization did not complete (exit status %s); commands were not started\\n' \"$command_status\"\n  if [ \"$command_status\" -eq 0 ]; then command_status=125; fi\nfi\nexit \"$command_status\"\n")
 	if err := os.WriteFile(j.wrapper, []byte(wrapper.String()), 0600); err != nil {
 		return err
 	}
 	p.jobs[step] = j
+	created = true
 	return nil
-}
-
-func netrcToken(value string) string {
-	if value == "" || strings.ContainsAny(value, " \t\r\n\v\f\\\"#") {
-		return strconv.Quote(value)
-	}
-	return value
 }
 
 func quote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
@@ -467,6 +466,11 @@ func (e *Engine) status(ctx context.Context, id string) (engine.State, bool, err
 
 func (e *Engine) monitor(p *pipeline, j *job) {
 	defer func() {
+		if j.confirmed && j.dir != "" {
+			if err := os.RemoveAll(filepath.Join(j.dir, "clone-auth")); err != nil {
+				logrus.WithError(err).Warn("lsf: cannot remove clone credentials")
+			}
+		}
 		j.finished = time.Now()
 		close(j.done)
 	}()
@@ -649,6 +653,16 @@ func (e *Engine) Destroy(ctx context.Context, spec *engine.Spec) error {
 	}()
 	if cleanupErr != nil {
 		return cleanupErr
+	}
+	// Includes created-but-never-started steps. Do not retain credentials with
+	// Debug artifacts after all jobs have been confirmed stopped.
+	for _, j := range p.jobs {
+		if j.dir == "" {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(j.dir, "clone-auth")); err != nil {
+			return err
+		}
 	}
 	if p.debugRetain {
 		return e.retainDebug(p, time.Now().UTC())

@@ -78,7 +78,7 @@ func TestShellStartupEnvironment(t *testing.T) {
 					}
 				}
 				for key := range got {
-					if strings.HasPrefix(key, shellEnvPrefix) || key == "DRONE_LSF_CLONE_NETRC_HOME" {
+					if strings.HasPrefix(key, shellEnvPrefix) || key == "DRONE_LSF_CLONE_AUTH_DIR" {
 						t.Errorf("internal environment leaked: %s", key)
 					}
 				}
@@ -219,7 +219,7 @@ func runStartupStep(t *testing.T, shell, home, commands string, env map[string]s
 	j := p.jobs[step]
 	writeStartupFile(t, filepath.Join(home, "implicit.sh"), "exit 95\n")
 	cmd := exec.Command("/bin/sh", j.wrapper)
-	cmd.Env = []string{"HOME=" + home, "PATH=/usr/bin:/bin", "LSB_JOBID=321", "LSF_ENVDIR=/node/lsf", "DRONE_LSF_CLONE_NETRC_HOME=/stale/parent", "BASH_ENV=" + filepath.Join(home, "implicit.sh")}
+	cmd.Env = []string{"HOME=" + home, "PATH=/usr/bin:/bin", "LSB_JOBID=321", "LSF_ENVDIR=/node/lsf", "DRONE_LSF_CLONE_AUTH_DIR=/stale/parent", "BASH_ENV=" + filepath.Join(home, "implicit.sh")}
 	out, runErr := cmd.CombinedOutput()
 	log, err := os.ReadFile(j.log)
 	if err != nil {

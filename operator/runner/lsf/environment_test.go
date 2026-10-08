@@ -27,7 +27,7 @@ func TestNodeEnvironmentAndNestedSubmission(t *testing.T) {
 		"LSF_SERVERDIR": "/server/lsf/etc", "SITE_LICENSE_SETTING": "server-license",
 		"SERVER_ONLY": "must-not-leak", "LD_LIBRARY_PATH": "/rhel8/lib", "PYTHONPATH": "/rhel8/python",
 		"OVERLAY_SETTING": "submission-value", "LSB_JOBID": "999999",
-		"DRONE_LSF_CLONE_NETRC_HOME": "/stale/parent/clone/home",
+		"DRONE_LSF_CLONE_AUTH_DIR": "/stale/parent/clone/home",
 	} {
 		t.Setenv(key, value)
 	}
@@ -61,7 +61,7 @@ func TestNodeEnvironmentAndNestedSubmission(t *testing.T) {
 		"test \"$SITE_LICENSE_SETTING\" = " + quote(custom) + "\n" +
 		"test \"$OVERLAY_SETTING\" = step-value\n" +
 		"test \"$FROM_SECRET\" = injected-secret\n" +
-		"test -z \"${DRONE_LSF_CLONE_NETRC_HOME:-}\"\n" +
+		"test -z \"${DRONE_LSF_CLONE_AUTH_DIR:-}\"\n" +
 		"test \"$(git config --global site.marker)\" = inherited-home\n"
 	dir := t.TempDir()
 	parent := filepath.Join(dir, "parent.sh")

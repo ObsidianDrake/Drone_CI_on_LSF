@@ -3,6 +3,7 @@ package lsf
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/cgi"
 	"net/http/httptest"
@@ -15,7 +16,7 @@ import (
 )
 
 // Exercise the generated script over real smart HTTP, not file:// or a fake
-// fetch. CI supplies real Git 1.7.1 and 1.8.3.1 clients as well.
+// fetch. CI supplies Git 2.8 with libcurl 7.19.7 and Git 2.43 as well.
 func TestNativeCloneHTTPCompatibility(t *testing.T) {
 	modern, err := exec.LookPath("git")
 	if err != nil {
@@ -62,9 +63,27 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 	handler := &cgi.Handler{Path: backend, Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1"}}
 	server := httptest.NewServer(handler)
 	defer server.Close()
+	refOnly := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(500)
+				return
+			}
+			r.Body.Close()
+			r.Body = io.NopCloser(strings.NewReader(string(body)))
+			if strings.Contains(string(body), "want "+first) {
+				http.Error(w, "Direct SHA fetch disabled", 400)
+				return
+			}
+		}
+		handler.ServeHTTP(w, r)
+	}))
+	defer refOnly.Close()
 	authenticated := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, password, ok := r.BasicAuth()
-		if !ok || user != "ci-user" || password != "ci-password" {
+		if !ok || user != "ci-user" || password != strings.Repeat("t", 194) {
 			w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
@@ -79,8 +98,8 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 
 	for _, client := range []struct{ name, path, env string }{
 		{"current", modern, ""},
-		{"1.7.1", os.Getenv("DRONE_TEST_GIT_1_7_1"), "DRONE_TEST_GIT_1_7_1"},
-		{"1.8.3.1", os.Getenv("DRONE_TEST_LEGACY_GIT"), "DRONE_TEST_LEGACY_GIT"},
+		{"2.8.0", os.Getenv("DRONE_TEST_GIT_2_8"), "DRONE_TEST_GIT_2_8"},
+		{"2.43.0", os.Getenv("DRONE_TEST_GIT_2_43"), "DRONE_TEST_GIT_2_43"},
 	} {
 		t.Run(client.name, func(t *testing.T) {
 			if client.path == "" {
@@ -97,16 +116,18 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 				}
 			}
 			for _, tc := range []struct {
-				name, sha, ref   string
-				depth            int
-				fail, deny, auth bool
+				name, sha, ref                       string
+				depth                                int
+				fail, deny, auth, badToken, forceRef bool
 			}{
 				{name: "branch-tip", sha: tip, ref: "refs/heads/main"},
 				{name: "branch-advanced", sha: first, ref: "refs/heads/main"},
 				{name: "shallow-tip", sha: tip, ref: "refs/heads/main", depth: 1},
 				{name: "shallow-advanced", sha: first, ref: "refs/heads/main", depth: 1},
+				{name: "ref-fallback-unshallow", sha: first, ref: "refs/heads/main", depth: 1, forceRef: true},
 				{name: "annotated-tag", sha: first, ref: "refs/tags/v1", depth: 1},
 				{name: "pull-ref", sha: tip, ref: "refs/pull/7/head", depth: 1},
+				{name: "authenticated-wrong-token", sha: tip, ref: "refs/heads/main", auth: true, badToken: true, fail: true},
 				{name: "authenticated-shallow-advanced", sha: first, ref: "refs/heads/main", depth: 1, auth: true},
 				{name: "unavailable-commit", sha: strings.Repeat("f", 40), ref: "refs/heads/main", depth: 1, fail: true},
 				{name: "deleted-ref", sha: strings.Repeat("f", 40), ref: "refs/heads/deleted", fail: true},
@@ -123,6 +144,9 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 						t.Fatal(err)
 					}
 					remote := server.URL + "/repo.git"
+					if tc.forceRef {
+						remote = refOnly.URL + "/repo.git"
+					}
 					if tc.deny {
 						remote = denied.URL + "/repo.git"
 					}
@@ -133,25 +157,35 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 					defer cancel()
 					cmd := exec.CommandContext(ctx, "/bin/sh", "-e", script)
 					cmd.Dir = dir
-					cmd.Env = []string{"HOME=" + home, "PATH=" + filepath.Dir(clientPath) + ":/usr/bin:/bin", "LC_ALL=C",
+					cmd.Env = []string{"HOME=" + home, "GIT_EXEC_PATH=" + clientExecPath(t, clientPath), "PATH=" + filepath.Dir(clientPath) + ":/usr/bin:/bin", "LC_ALL=C",
 						"GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "DRONE_REMOTE_URL=" + remote,
 						"DRONE_COMMIT_SHA=" + tc.sha, "DRONE_COMMIT_REF=" + tc.ref}
 					accountNetrc := "machine 127.0.0.1 login personal password do-not-change\n"
+					authDir := filepath.Join(t.TempDir(), "auth")
 					if tc.auth {
-						privateHome := t.TempDir()
-						for path, data := range map[string]string{
-							filepath.Join(home, ".netrc"):        accountNetrc,
-							filepath.Join(privateHome, ".netrc"): "machine 127.0.0.1 login ci-user password ci-password\n",
-						} {
-							if err := os.WriteFile(path, []byte(data), 0600); err != nil {
-								t.Fatal(err)
-							}
+						if err := os.WriteFile(filepath.Join(home, ".netrc"), []byte(accountNetrc), 0600); err != nil {
+							t.Fatal(err)
 						}
-						cmd.Env = append(cmd.Env, "DRONE_LSF_CLONE_NETRC_HOME="+privateHome)
+						password := strings.Repeat("t", 194)
+						if tc.badToken {
+							password = strings.Repeat("x", 194)
+						}
+						if err := createCloneAuth(authDir, remote, "127.0.0.1", "ci-user", password); err != nil {
+							t.Fatal(err)
+						}
+						cmd.Env = append(cmd.Env, "DRONE_LSF_CLONE_AUTH_DIR="+authDir, "GIT_CURL_VERBOSE=1", "GIT_TRACE=1", "GIT_ASKPASS=/must-not-run")
 					}
 					out, err := cmd.CombinedOutput()
 					if ctx.Err() != nil || (err != nil) != tc.fail {
 						t.Fatalf("unexpected result: %v (context %v)\n%s", err, ctx.Err(), out)
+					}
+					if tc.auth {
+						if _, err := os.Stat(authDir); !os.IsNotExist(err) {
+							t.Fatal("clone credentials retained")
+						}
+						if strings.Contains(string(out), strings.Repeat("t", 194)) || strings.Contains(string(out), strings.Repeat("x", 194)) || strings.Contains(string(out), "Authorization:") {
+							t.Fatal("credentials exposed in log")
+						}
 					}
 					if tc.fail {
 						check := exec.Command(modern, "rev-parse", "--verify", "HEAD")
@@ -174,25 +208,21 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 					if data, err := os.ReadFile(filepath.Join(dir, "version.txt")); err != nil || string(data) != wantContent {
 						t.Fatalf("checkout content = %q, want %q: %v", data, wantContent, err)
 					}
-					if client.name != "current" && strings.HasSuffix(tc.name, "shallow-advanced") && git(dir, "rev-list", "--count", "FETCH_HEAD") != "2" {
+					if tc.forceRef && git(dir, "rev-list", "--count", "FETCH_HEAD") != "2" {
 						t.Fatal("full-history fetch did not restore branch history")
 					}
 					if !strings.Contains(string(out), "[clone] Verified HEAD: "+tc.sha) {
 						t.Fatalf("missing commit verification\n%s", out)
+					}
+					if tc.forceRef && (!strings.Contains(string(out), "Ref fetch succeeded") || !strings.Contains(string(out), "Full-history fetch succeeded")) {
+						t.Fatalf("missing ref fallback / unshallow: %s", out)
 					}
 					if tc.auth {
 						if data, err := os.ReadFile(filepath.Join(home, ".netrc")); err != nil || string(data) != accountNetrc {
 							t.Fatalf("account netrc changed: %v", err)
 						}
 					}
-					if client.name != "current" {
-						if !strings.Contains(string(out), "SHA fetch exited") || !strings.Contains(string(out), "Ref fetch succeeded") {
-							t.Fatalf("legacy HTTP clone did not exercise ref fallback\n%s", out)
-						}
-						if strings.HasSuffix(tc.name, "shallow-advanced") && !strings.Contains(string(out), "Full-history fetch succeeded") {
-							t.Fatalf("did not expand shallow history\n%s", out)
-						}
-					}
+
 				})
 			}
 		})
@@ -217,4 +247,14 @@ func TestNativeCloneCompilation(t *testing.T) {
 			t.Fatal("native clone did not receive the compatibility script")
 		})
 	}
+}
+
+func clientExecPath(t *testing.T, client string) string {
+	t.Helper()
+	cmd := exec.Command(client, "--exec-path")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(out))
 }

@@ -83,7 +83,11 @@ func (s *Service) Create(ctx context.Context, user *core.User, repo *core.Reposi
 	case scm.DriverBitbucket:
 		netrc.Login = "x-token-auth"
 		netrc.Password = user.Token
-	case scm.DriverGithub, scm.DriverGogs, scm.DriverGitea:
+	case scm.DriverGitea:
+		// Keep tokens out of Git's username/password prompt descriptions.
+		netrc.Login = user.Login
+		netrc.Password = user.Token
+	case scm.DriverGithub, scm.DriverGogs:
 		netrc.Password = "x-oauth-basic"
 		netrc.Login = user.Token
 	}
