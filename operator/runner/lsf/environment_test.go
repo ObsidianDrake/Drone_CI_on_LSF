@@ -14,16 +14,18 @@ import (
 	"github.com/drone/drone/internal/pipelineruntime"
 )
 
-func TestInheritedEnvironmentAndNestedSubmission(t *testing.T) {
+func TestNodeEnvironmentAndNestedSubmission(t *testing.T) {
 	e := testEngine(t)
 	home := t.TempDir()
 	conf := t.TempDir()
 	bin := filepath.Dir(e.config.Bsub)
-	path := bin + ":" + os.Getenv("PATH")
+	path := bin + ":/usr/bin:/bin"
 	custom := "site environment 'with spaces' $literal"
+	t.Setenv("LSF_MOCK_EXEC_HOME", home)
 	for key, value := range map[string]string{
-		"HOME": home, "PATH": path, "LSF_ENVDIR": conf,
-		"LSF_SERVERDIR": "/site/lsf/etc", "SITE_LICENSE_SETTING": custom,
+		"HOME": t.TempDir(), "PATH": "/rhel8/bin:" + os.Getenv("PATH"), "LSF_ENVDIR": "/server/lsf",
+		"LSF_SERVERDIR": "/server/lsf/etc", "SITE_LICENSE_SETTING": "server-license",
+		"SERVER_ONLY": "must-not-leak", "LD_LIBRARY_PATH": "/rhel8/lib", "PYTHONPATH": "/rhel8/python",
 		"OVERLAY_SETTING": "submission-value", "LSB_JOBID": "999999",
 		"DRONE_LSF_CLONE_NETRC_HOME": "/stale/parent/clone/home",
 	} {
@@ -33,6 +35,14 @@ func TestInheritedEnvironmentAndNestedSubmission(t *testing.T) {
 		".netrc":     "machine account.example login personal password untouched\n",
 		".gitconfig": "[site]\n\tmarker = inherited-home\n",
 	}
+	// These checks run before rc sets any values: server state must already be
+	// absent when the execution shell starts, not just overwritten afterwards.
+	clean := "test -z \"${SERVER_ONLY:-}${LD_LIBRARY_PATH:-}${PYTHONPATH:-}${LSF_ENVDIR:-}${SITE_LICENSE_SETTING:-}\" || exit 91\n" +
+		"case \"${PATH:-}\" in *rhel8*) exit 92;; esac\n"
+	files[".profile"] = clean + "export PATH=" + quote(path) + "\n" +
+		"export LSF_ENVDIR=" + quote(conf) + " LSF_SERVERDIR=/site/lsf/etc\n" +
+		"export SITE_LICENSE_SETTING=" + quote(custom) + " OVERLAY_SETTING=rc-value\n" +
+		"export LSF_MOCK_STATE_DIR=" + quote(os.Getenv("LSF_MOCK_STATE_DIR")) + "\n"
 	for name, data := range files {
 		if err := os.WriteFile(filepath.Join(home, name), []byte(data), 0600); err != nil {
 			t.Fatal(err)
@@ -42,6 +52,7 @@ func TestInheritedEnvironmentAndNestedSubmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	checks := "set -eu\n" +
+		"test -z \"${SERVER_ONLY:-}${LD_LIBRARY_PATH:-}${PYTHONPATH:-}\"\n" +
 		"test \"$HOME\" = " + quote(home) + "\n" +
 		"test \"$PATH\" = " + quote(path) + "\n" +
 		"test \"$LSF_ENVDIR\" = " + quote(conf) + "\n" +
@@ -65,6 +76,17 @@ func TestInheritedEnvironmentAndNestedSubmission(t *testing.T) {
 		}
 	}
 	e.config.Queue = "outer.q"
+	e.config.Shell = "/bin/sh"
+	// Local bsub still needs the submission host's client configuration.
+	client := filepath.Join(t.TempDir(), "bsub")
+	writeStartupFile(t, client, "#!/bin/sh\n"+
+		"test \"$LSF_ENVDIR\" = /server/lsf || exit 93\n"+
+		"test \"$SERVER_ONLY\" = must-not-leak || exit 94\n"+
+		"exec "+quote(e.config.Bsub)+" \"$@\"\n")
+	if err := os.Chmod(client, 0700); err != nil {
+		t.Fatal(err)
+	}
+	e.config.Bsub = client
 	spec := testSpec(t, `kind: pipeline
 type: lsf
 clone: {disable: true}
@@ -112,9 +134,15 @@ steps:
 	if err := json.Unmarshal(data, &jobs); err != nil || len(jobs) != 2 {
 		t.Fatalf("jobs: %v %s", err, data)
 	}
-	for _, job := range jobs {
-		if job.Environment != "all" || job.Status != "DONE" {
-			t.Fatalf("submission did not inherit all: %s", data)
+	for i, job := range jobs {
+		// The runner isolates its own job. Nested submissions use the step's
+		// initialized environment and the caller's chosen LSF options.
+		want := "none"
+		if i == 1 {
+			want = "all"
+		}
+		if job.Environment != want || job.Status != "DONE" {
+			t.Fatalf("unexpected submission environment: %s", data)
 		}
 	}
 }

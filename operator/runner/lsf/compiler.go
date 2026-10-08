@@ -117,6 +117,24 @@ func Lint(p *yaml.Pipeline, trusted bool) error {
 				return err
 			}
 		}
+		if value := s.Environment["SHELL_OPTION"]; value != nil && value.Secret == "" {
+			shell := s.Shell
+			if v := s.Environment["SHELL_TYPE"]; v != nil {
+				if v.Secret != "" {
+					shell = ""
+				} else if v.Value != "" {
+					shell = v.Value
+				}
+			}
+			var initialize *bool
+			if v := s.Environment["SHELL_INIT"]; v != nil && v.Secret == "" && v.Value != "" {
+				enabled, _ := shellInitEnabled(v.Value, true)
+				initialize = &enabled
+			}
+			if _, err := parseShellOptions(shell, initialize, value.Value); err != nil {
+				return fmt.Errorf("lsf: step %q: %w", s.Name, err)
+			}
+		}
 		if !relativePath(s.WorkingDir) {
 			return fmt.Errorf("lsf: step %q working_dir must be relative to the workspace", s.Name)
 		}

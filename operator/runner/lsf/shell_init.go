@@ -40,7 +40,7 @@ func shellStartupArgs(shell string, initialize bool) ([]string, error) {
 	return args, err
 }
 
-func shellStartupScript(shell string, initialize, clone bool, keys []string, commands []byte) string {
+func shellStartupScript(shell string, initialize, clone bool, keys []string, commands []byte, options shellOptions) string {
 	csh := isCShell(shell)
 	var s strings.Builder
 	if !csh {
@@ -89,6 +89,22 @@ func shellStartupScript(shell string, initialize, clone bool, keys []string, com
 		s.WriteString("unsetenv " + shellEnvPrefix + "WORKDIR\nunsetenv " + shellEnvPrefix + "READY\n")
 	} else {
 		s.WriteString("unset " + shellEnvPrefix + "WORKDIR " + shellEnvPrefix + "READY\n")
+	}
+	// Bootstrap temporarily disables tracing while applying secrets. Honor
+	// explicit user tracing only after all environment transport is removed.
+	if options.verbose {
+		if csh {
+			s.WriteString("set verbose\n")
+		} else {
+			s.WriteString("set -v\n")
+		}
+	}
+	if options.trace {
+		if csh {
+			s.WriteString("set echo\n")
+		} else {
+			s.WriteString("set -x\n")
+		}
 	}
 	if clone {
 		// Only exported state crosses into clone's POSIX shell. The selected

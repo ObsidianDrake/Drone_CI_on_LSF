@@ -9,6 +9,11 @@ clone:
 
 environment:
   SHELL_TYPE: tcsh
+  # Optional: load shell rc on each execution node; "false" skips rc.
+  # Omit to use DRONE_LSF_SHELL_INIT (default: true). See docs/lsf-runner.md.
+  # SHELL_INIT: "true"
+  # Optional shell arguments; tcsh -f conflicts with SHELL_INIT: "true".
+  # SHELL_OPTION: "-x"
   BSUB_OPTION: "-n 1"
   SERVICE_WAIT_SECONDS: "300"
 

@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import fcntl
 import json
 import os
+import pwd
 from pathlib import Path
 import shlex
 import shutil
@@ -147,6 +148,12 @@ def worker(job_id):
         job = read(job_id)
         env = dict(os.environ if job.get("environment", "all") == "all" else {}, LSB_JOBID=str(job_id), LSB_JOBNAME=job["name"],
                    LSB_QUEUE=job["queue"], LSB_DJOB_NUMPROC=str(job["slots"]))
+        if job.get("environment") == "none":
+            # LSF still supplies execution-account/job state with -env none.
+            # Allow tests to model a node HOME distinct from the submit host.
+            account = pwd.getpwuid(os.getuid())
+            env.update(HOME=os.environ.get("LSF_MOCK_EXEC_HOME", account.pw_dir),
+                       USER=account.pw_name, PWD=job["cwd"])
         with open(job["stdout"], job["stdout_mode"]) as out, open(job["stderr"], job["stderr_mode"]) as err:
             # A script file avoids command-length limits and executes stdin scripts with tcsh too.
             with tempfile.TemporaryFile(mode="w+") as script:

@@ -60,6 +60,23 @@ class MockLSFTest(unittest.TestCase):
         for value in (f"Job <{job_id}>", "Job Name <details>", "User <", "Queue <test>", "Command <echo done>", "Started on <", f"CWD <{self.root}>", "Output File <", "Error File <"):
             self.assertIn(value, result.stdout)
 
+    def test_no_submission_environment(self):
+        node_home = self.root / "node-home"
+        node_home.mkdir()
+        self.env.update(HOME=str(self.root / "server-home"),
+                        LSF_MOCK_EXEC_HOME=str(node_home),
+                        SERVER_ONLY="server-value", LD_LIBRARY_PATH="/rhel8/lib")
+        job_id = self.submit("-env", "none", "-oo", "env.log", "/usr/bin/env", "-0")
+        job = self.wait(job_id)
+        self.assertEqual(job["status"], "DONE")
+        env = dict(item.split("=", 1) for item in (self.root / "env.log").read_text().split("\0") if item)
+        self.assertEqual(env["HOME"], str(node_home))
+        self.assertEqual(env["PWD"], str(self.root))
+        self.assertEqual(env["LSB_JOBID"], str(job_id))
+        self.assertTrue(env["USER"])
+        for key in ("SERVER_ONLY", "LD_LIBRARY_PATH", "LSF_MOCK_STATE_DIR", "LSF_MOCK_EXEC_HOME"):
+            self.assertNotIn(key, env)
+
     def test_stdin_failure_and_stderr(self):
         result = self.run_cmd("bsub", "-K", "-eo", "error.log",
                               input="echo problem > /dev/stderr\nexit 7\n")

@@ -66,8 +66,13 @@ func TestLSFRunnerLifecycle(t *testing.T) {
 		{"failure", "  - exit 9", core.StatusFailing, 9, false, false},
 		{"cancel", "  - echo ready\n  - sleep 60", core.StatusKilled, 0, true, false},
 		{"hidden job info", "  - echo hello", core.StatusPassing, 0, false, true},
+		{"server proxy isolated", "  - /usr/bin/env", core.StatusPassing, 0, false, true},
+		{"explicit proxy", "  - /usr/bin/env", core.StatusPassing, 0, false, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
+				t.Setenv(key, "server-proxy.invalid")
+			}
 			shell, err := exec.LookPath("tcsh")
 			if err != nil {
 				t.Skip("tcsh required")
@@ -92,6 +97,10 @@ func TestLSFRunnerLifecycle(t *testing.T) {
 				m.cancel = cancel
 			}
 			r := &Runner{Type: "lsf", Engine: e, Manager: m, Registry: registry.Static(nil), Secrets: secret.Static(nil)}
+			if test.name == "explicit proxy" {
+				m.details.Config.Data = append(m.details.Config.Data, []byte("  environment:\n    HTTP_PROXY: http://yaml-proxy.invalid\n    HTTPS_PROXY: http://yaml-proxy.invalid\n")...)
+				r.Environ = map[string]string{"HTTPS_PROXY": "http://runner-proxy.invalid"}
+			}
 			if err := r.poll(context.Background()); err != nil {
 				t.Fatal(err)
 			}
@@ -105,7 +114,7 @@ func TestLSFRunnerLifecycle(t *testing.T) {
 				if strings.Contains(m.logs.String(), "--- LSF job information") == test.disabled {
 					t.Fatalf("wrong job info visibility: %s", m.logs.String())
 				}
-				if test.disabled && !strings.Contains(m.logs.String(), "hello") {
+				if test.name == "hidden job info" && !strings.Contains(m.logs.String(), "hello") {
 					t.Fatal("ordinary logs missing")
 				}
 			}
@@ -122,6 +131,16 @@ func TestLSFRunnerLifecycle(t *testing.T) {
 			if test.name == "success" && !strings.Contains(m.logs.String(), "hello") {
 				t.Fatalf("logs: %s", m.logs.String())
 			}
+			if strings.Contains(m.logs.String(), "server-proxy.invalid") {
+				t.Fatalf("server proxy leaked into job: %s", m.logs.String())
+			}
+			if test.name == "explicit proxy" {
+				for _, want := range []string{"HTTP_PROXY=http://yaml-proxy.invalid", "HTTPS_PROXY=http://runner-proxy.invalid"} {
+					if !strings.Contains(m.logs.String(), want) {
+						t.Fatalf("missing explicit proxy %q: %s", want, m.logs.String())
+					}
+				}
+			}
 		})
 	}
 }
@@ -133,6 +152,43 @@ func TestLSFPollKeepsShutdownContext(t *testing.T) {
 	r := &Runner{Type: "lsf", Manager: m}
 	if err := r.poll(ctx); err != context.Canceled {
 		t.Fatalf("shutdown context lost: %v", err)
+	}
+}
+
+func TestLSFRejectsShellOptionConflictsBeforeSubmission(t *testing.T) {
+	for _, test := range []struct {
+		name, environment string
+		global            map[string]string
+	}{
+		{"yaml", "{SHELL_TYPE: tcsh, SHELL_INIT: 'true', SHELL_OPTION: -f}", nil},
+		{"runner defaults", "{SHELL_OPTION: -f}", nil},
+		{"runner override", "{SHELL_TYPE: tcsh, SHELL_INIT: 'false', SHELL_OPTION: -f}", map[string]string{"SHELL_INIT": "true"}},
+		{"secret", "{SHELL_OPTION: {from_secret: options}}", nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workspace := filepath.Join(t.TempDir(), "workspace")
+			e, err := lsf.New(lsf.Config{Bsub: "/bin/false", Bjobs: "/bin/false", Bkill: "/bin/false", Workspace: workspace})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := &lsfManager{details: &manager.Context{
+				Repo:  &core.Repository{Trusted: true, Timeout: 1, Config: ".drone.yml"},
+				Build: &core.Build{Status: core.StatusRunning}, Stage: &core.Stage{Name: "test", Status: core.StatusPending}, System: &core.System{},
+				Config: &core.File{Data: []byte("kind: pipeline\ntype: lsf\nname: test\nsteps:\n- name: build\n  environment: " + test.environment + "\n  commands: [echo ok]\n")},
+			}}
+			r := &Runner{Type: "lsf", Engine: e, Manager: m, Registry: registry.Static(nil),
+				Environ: test.global, Secrets: secret.Static([]*core.Secret{{Name: "options", Data: "-f"}})}
+			if err := r.Run(context.Background(), 1); err != nil {
+				t.Fatal(err)
+			}
+			stage := m.details.Stage
+			if stage.Status != core.StatusError || !strings.Contains(stage.Error, "SHELL_OPTION -f conflicts with SHELL_INIT=true") || !strings.Contains(stage.Error, `step "build"`) {
+				t.Fatalf("expected YAML configuration error, got %+v", stage)
+			}
+			if _, err := os.Stat(workspace); !os.IsNotExist(err) {
+				t.Fatalf("invalid pipeline reached engine setup: %v", err)
+			}
+		})
 	}
 }
 

@@ -3,6 +3,11 @@ name: run_QC
 environment: &env
   BSUB_OPTION: -q pdkd3_4_gitea_8.q
   SHELL_TYPE: csh
+  # Optional default for listed steps: "true" loads node rc, "false" skips it.
+  # Omit to use DRONE_LSF_SHELL_INIT (default: true). See docs/lsf-runner.md.
+  # SHELL_INIT: "true"
+  # Optional shell arguments. For csh/tcsh, -f requires SHELL_INIT: "false".
+  # SHELL_OPTION: "-f"
 clone:
   disable: true
 steps:

@@ -36,10 +36,10 @@ bsub -K < job.tcsh
 ## 支援範圍
 
 - `bsub`：非同步提交；`-K` 等待完成；`-J`、`-q`、`-n`、`-R`、`-m` 記錄 metadata；`-cwd` 指定執行目錄。
-- `-env all`（預設）繼承提交環境；`-env none` 清除提交環境，但仍提供 LSF job 變數。
+- `-env all`（預設）繼承提交環境；`-env none` 清除提交環境，但仍提供執行帳號的 `HOME`、`USER`、工作目錄 `PWD` 與 LSF job 變數。測試可用 `LSF_MOCK_EXEC_HOME` 指定模擬執行節點的 HOME；此控制變數不會自動傳入 job。
 - `-o` / `-e` 附加 stdout / stderr，`-oo` / `-eo` 覆寫；路徑支援 `%J` job ID，父目錄必須已存在，相對路徑以提交目錄為準。
 - 預設 stdout / stderr 分別寫入狀態目錄的 `<ID>.out` / `<ID>.err`。只指定 stdout 時，stderr 仍寫入預設檔案。
-- 每個工作使用 `tcsh -f`（不讀 `.tcshrc`），繼承提交時的環境與目錄，並設定 `LSB_JOBID`、`LSB_JOBNAME`、`LSB_QUEUE`、`LSB_DJOB_NUMPROC`。
+- 每個工作使用 `tcsh -f`（不讀 `.tcshrc`），依 `-env` 選擇環境，依 `-cwd` 選擇目錄，並設定 `LSB_JOBID`、`LSB_JOBNAME`、`LSB_QUEUE`、`LSB_DJOB_NUMPROC`。Drone wrapper 會另外執行所選 shell 的初始化。
 - 單一 command 參數視為 tcsh 表達式；多個 command 參數視為 argv。如需管線、重導向或多個命令，請將完整表達式包成單一參數。
 - `bkill ID [ID ...]` 非同步提出取消要求；worker 約每 50ms 檢查，以 SIGKILL 終止 tcsh 與同一 session 的子程序（包含 tcsh 背景工作的程序群組），記錄 `EXIT` / 137。不使用持久化 PID 向其他程序發送訊號。
 - `bjobs` 顯示未完成工作；`-a` 包含已完成工作；指定 ID 可查完成工作。`-json` 是本模擬器的診斷介面，並非完整 LSF JSON 格式。

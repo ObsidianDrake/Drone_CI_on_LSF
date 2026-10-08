@@ -130,6 +130,9 @@ func (e *Engine) Setup(ctx context.Context, spec *engine.Spec) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if err := e.Validate(spec); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(e.config.Workspace, 0700); err != nil {
 		return err
 	}
@@ -218,41 +221,24 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 	}
 	// Overlay pipeline settings on the environment supplied by LSF at job
 	// execution time. Do not replace the execution host's PATH or HOME.
-	env := make(map[string]string)
-	for key, value := range step.Envs {
-		env[key] = value
-	}
-	for _, ref := range step.Secrets {
-		found := false
-		for _, secret := range spec.Secrets {
-			if secret.Metadata.Name == ref.Name {
-				env[ref.Env] = secret.Data
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("lsf: missing secret %q", ref.Name)
-		}
+	env, err := stepEnvironment(spec, step)
+	if err != nil {
+		return err
 	}
 	j.options, err = splitOptions(env["BSUB_OPTION"])
 	if err != nil {
 		return err
 	}
-	shell := env["SHELL_TYPE"]
-	if shell == "" {
-		shell = e.config.Shell
-	}
-	initialize, err := shellInitEnabled(env["SHELL_INIT"], !e.config.DisableShellInit)
+	shell, initialize, options, err := e.shellSettings(env)
 	if err != nil {
 		return err
 	}
 	// Clone initialization uses the selected shell, then execs the POSIX
 	// clone script with the initialized, overlaid environment.
-	if nativeClone && !initialize {
+	if nativeClone && !initialize && len(options.args) == 0 {
 		shell = "/bin/sh"
 	}
-	command, err := shellStartupArgs(shell, initialize)
+	command, err := shellCommand(shell, initialize, options)
 	if err != nil {
 		return err
 	}
@@ -305,7 +291,7 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	startup := shellStartupScript(shell, initialize, nativeClone, keys, script)
+	startup := shellStartupScript(shell, initialize, nativeClone, keys, script, options)
 	startupPath := filepath.Join(dir, "startup.script")
 	if err := os.WriteFile(startupPath, []byte(startup), 0600); err != nil {
 		return err
@@ -401,8 +387,11 @@ func (e *Engine) Start(ctx context.Context, spec *engine.Spec, step *engine.Step
 		return fmt.Errorf("lsf: step already submitted")
 	}
 	name := stepJobName(spec, step)
+	// Keep the submission host's environment for the local LSF client only.
+	// Jobs initialize their environment on the execution host; omitting -env
+	// would allow LSF's default submission-environment inheritance.
 	args := []string{"-J", name, "-cwd", p.workspace,
-		"-oo", filepath.Join(j.dir, "scheduler.out"), "-eo", filepath.Join(j.dir, "scheduler.err"), "-env", "all"}
+		"-oo", filepath.Join(j.dir, "scheduler.out"), "-eo", filepath.Join(j.dir, "scheduler.err"), "-env", "none"}
 	has := func(option string) bool {
 		for _, arg := range j.options {
 			if arg == option || strings.HasPrefix(arg, option+"=") {

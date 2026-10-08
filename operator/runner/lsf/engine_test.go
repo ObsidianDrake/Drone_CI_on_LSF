@@ -33,6 +33,7 @@ func testEngine(t *testing.T) *Engine {
 		t.Fatal(err)
 	}
 	t.Setenv("LSF_MOCK_STATE_DIR", t.TempDir())
+	t.Setenv("LSF_MOCK_EXEC_HOME", t.TempDir())
 	e, err := New(Config{Bsub: filepath.Join(bin, "bsub"), Bjobs: filepath.Join(bin, "bjobs"), Bkill: filepath.Join(bin, "bkill"),
 		Workspace: filepath.Join(t.TempDir(), "workspace with spaces"), Shell: shell, PollInterval: 20 * time.Millisecond, CommandTimeout: 3 * time.Second, CleanupTimeout: 3 * time.Second})
 	if err != nil {
@@ -162,6 +163,7 @@ func TestAuthenticatedHTTPClone(t *testing.T) {
 	// In CI, select real Git 1.7.1 via the rc file, including HTTP netrc auth.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("LSF_MOCK_EXEC_HOME", home)
 	client := os.Getenv("DRONE_TEST_GIT_1_7_1")
 	if client == "" {
 		var err error

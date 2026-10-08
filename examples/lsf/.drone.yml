@@ -3,6 +3,13 @@ name: lsf-build
 
 steps:
 - name: prepare
+  # Optional: initialize shell rc on the execution node (server default: true).
+  # Set to "false" to skip rc; neither value inherits the server environment.
+  # See docs/lsf-runner.md for SHELL_INIT and DRONE_LSF_SHELL_INIT.
+  # environment:
+  #   SHELL_INIT: "true"
+  #   SHELL_OPTION: "-x"
+  # For csh/tcsh, SHELL_OPTION: "-f" requires SHELL_INIT: "false".
   commands:
   - 'echo "LSF job: $$LSB_JOBID"'
   - 'set message = "hello from tcsh"'

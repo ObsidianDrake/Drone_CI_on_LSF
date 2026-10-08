@@ -331,7 +331,13 @@ func (r *Runner) Run(ctx context.Context, id int64) error {
 			netrc.Password,
 		),
 		transform.WithNetworks(r.Networks),
-		transform.WithProxy(),
+		func(spec *engine.Spec) {
+			// LSF jobs obtain proxy settings from node initialization or explicit
+			// pipeline/runner settings, never implicitly from the server host.
+			if r.Type != "lsf" {
+				transform.WithProxy()(spec)
+			}
+		},
 		transform.WithSecretFunc(
 			func(name string) *engine.Secret {
 				in := &core.SecretArgs{
@@ -360,6 +366,11 @@ func (r *Runner) Run(ctx context.Context, id int64) error {
 	var ir *engine.Spec
 	if r.Type == "lsf" {
 		ir = lsf.Compile(comp, pipeline)
+		if backend, ok := r.Engine.(*lsf.Engine); ok {
+			if err := backend.Validate(ir); err != nil {
+				return r.handleError(ctx, m.Stage, err)
+			}
+		}
 		if ir.Metadata.Labels == nil {
 			ir.Metadata.Labels = make(map[string]string)
 		}

@@ -7,9 +7,12 @@ import (
 	"unicode"
 )
 
-// splitOptions splits quoted CLI arguments without expanding variables,
+// splitArguments splits quoted CLI arguments without expanding variables,
 // substitutions, globs, or executing a shell.
-func splitOptions(input string) ([]string, error) {
+func splitArguments(input, setting string) ([]string, error) {
+	if strings.ContainsRune(input, 0) {
+		return nil, fmt.Errorf("lsf: %s contains a NUL byte", setting)
+	}
 	var args []string
 	var word strings.Builder
 	var quote rune
@@ -50,10 +53,18 @@ func splitOptions(input string) ([]string, error) {
 		}
 	}
 	if escape || quote != 0 {
-		return nil, fmt.Errorf("lsf: BSUB_OPTION has an unfinished quote or escape")
+		return nil, fmt.Errorf("lsf: %s has an unfinished quote or escape", setting)
 	}
 	if started {
 		args = append(args, word.String())
+	}
+	return args, nil
+}
+
+func splitOptions(input string) ([]string, error) {
+	args, err := splitArguments(input, "BSUB_OPTION")
+	if err != nil {
+		return nil, err
 	}
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		return nil, fmt.Errorf("lsf: BSUB_OPTION must contain bsub options, not a command")
