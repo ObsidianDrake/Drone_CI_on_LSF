@@ -215,6 +215,7 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 	var initialLog []byte
 	if p.debugRetain {
 		initialLog = []byte(fmt.Sprintf("\n[Debug] Pipeline directory retained after completion: %s (retention: %s; expiry recorded in %s after confirmed completion)\n[Debug] LSF output: %s\n[Debug] LSF error: %s\n\n", p.dir, e.config.DebugRetention, debugRetentionFile, filepath.Join(j.dir, "scheduler.out"), filepath.Join(j.dir, "scheduler.err")))
+		initialLog = append(initialLog, "[Debug] Environment snapshot is unavailable until shell initialization completes.\n"...)
 	}
 	if err := os.WriteFile(j.log, initialLog, 0600); err != nil {
 		return err
@@ -292,7 +293,14 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	startup := shellStartupScript(shell, initialize, nativeClone, keys, script, options)
+	snapshot := ""
+	if p.debugRetain {
+		snapshot, err = createDebugSnapshot(dir, shell, step)
+		if err != nil {
+			return err
+		}
+	}
+	startup := shellStartupScript(shell, initialize, nativeClone, keys, script, options, snapshot)
 	startupPath := filepath.Join(dir, "startup.script")
 	if err := os.WriteFile(startupPath, []byte(startup), 0600); err != nil {
 		return err
@@ -334,6 +342,9 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 	}
 	wrapper.WriteString(" " + quote(startupPath) + " 2>" + stderrPipe + "\n")
 	wrapper.WriteString("command_status=$?\nwait \"$stderr_reader\"\n")
+	if p.debugRetain {
+		wrapper.WriteString("if [ ! -f " + quote(filepath.Join(dir, debugEnvFilename(shell))) + " ]; then\n  printf '%s\\n' '[Debug] Environment snapshot unavailable; initialization may not have completed or snapshot creation failed.'\nfi\n")
+	}
 	// Also covers startup failure before clone.sh executes its own cleanup.
 	if nativeClone {
 		wrapper.WriteString("/bin/rm -rf -- " + quote(authDir) + "\n")

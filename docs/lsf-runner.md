@@ -316,6 +316,22 @@ LSF Debug build 正常執行所有 steps，成功、失敗或取消後保留整�
 
 一般 Restart 或 webhook build 維持原本清理行為；一般 Restart 不繼承前一次 build 的 Debug 標記。此功能適用於內建 LSF engine。
 
+### 還原 step 環境
+
+Debug mode 會在每個實際執行的 step 目錄產生環境快照。擷取位置是 LSF 執行節點，時間點為 shell 初始化、Drone environment / secrets 套用及切換 `working_dir` 完成後，第一個 command 執行之前。依 step 實際使用的 shell（`SHELL_TYPE` 或 runner 預設）產生對應檔案：
+
+| Shell | 檔案 | 在相同 shell 內載入 |
+| --- | --- | --- |
+| csh / tcsh | `env.csh` | `source /path/to/step-xxxx/env.csh` |
+| bash | `env.bash` | `source /path/to/step-xxxx/env.bash` |
+| sh | `env.sh` | `. /path/to/step-xxxx/env.sh` |
+
+載入後會覆寫同名 exported environment，並切換到當時的工作目錄，不會重跑 commands；terminal 原有但快照未列出的變數仍保留。建議另開相同 shell、在相同 OS／工具環境下使用。檔頭記錄 shell、執行主機、RHEL 版本及原 LSF job 資訊；`LSB_*`、主機身分與 shell 暫態變數不會重新注入。一般 LSF 工具設定如 `LSF_ENVDIR`、PATH、library 與 license 設定可還原。
+
+快照不保存 Drone 管理的 secret 變數、包含這些 secret 值的其他變數、clone 認證與 askpass 設定；省略的變數名稱會列在註解中。這不是對任意 rc／YAML 明文密碼的自動辨識，這些值應改用 Drone secrets 管理。alias、function、未 export 的 shell 變數，以及 commands 內才 source／修改的環境不包含在快照中。clone 的快照是初始化環境，不包含 Git subprocess 專用的暫存認證環境；若 clone 停用初始化且未指定 shell options 而直接使用 `/bin/sh`，會產生 `env.sh`。
+
+快照權限固定為 `0600`，完成後才原子發布，隨 Debug 目錄一起到期清理；不額外保留未過濾的環境檔。產生流程使用執行節點的 `/bin/sh` 與 `/usr/bin/awk`，不需要 Python 或在 RHEL 6 上執行 server binary。log 提供英文檔案位置與載入指令。尚未啟動或初始化失敗時不會產生快照；快照寫入失敗會警告，原 commands 繼續執行。command 執行失敗時，已產生的快照仍保留。
+
 Debug 目錄預設在整個 pipeline 收尾、所有已提交的 LSF jobs 都確認結束後保留 **7 天**。server 啟動時及之後每小時掃描一次，清除到期目錄；實際刪除時間取決於下一次掃描，server 停機期間不會執行清理。一般 build 的清理方式不變。
 
 每個符合清理條件的 Debug 目錄會以受限權限、原子寫入方式建立 `.drone-lsf-retention.json`，記錄版本、保留原因、目錄名稱、repository/build/stage ID、UTC 完成時間與到期時間。每條 pipeline（stage）分別起算，並非整個多 pipeline build 共用一個到期時間；不使用目錄 mtime 判斷。server 重啟後仍依檔案中的到期時間回收，修改設定只影響之後完成的 pipeline。
