@@ -1,6 +1,16 @@
 const assert=require('assert'), droneTrendsCSS='',A=()=>{};
 assert.strictEqual(droneTrendPath([0,1,2,3],[[1],[null],[2],[4]],0,i=>i,v=>v),' M0.00,1.00 M2.00,2.00 L3.00,4.00');
-assert.strictEqual(droneTrendColor({slug:'team/a'}),droneTrendColor({slug:'team/a'}));
+// More available repositories than palette entries must not cause selected color collisions.
+const colorRepos=Array.from({length:30},(_,i)=>({id:i+1,slug:'team/repo'+i}));
+let colorSeries=colorRepos.slice(0,12);
+let colorMap=droneTrendColors(colorRepos,colorSeries,{});
+assert.strictEqual(new Set(colorSeries.map(r=>colorMap[r.id])).size,12);
+assert.deepStrictEqual(droneTrendColors([...colorRepos].reverse(),[...colorSeries].reverse(),colorMap),colorMap);
+const previousColors=Object.fromEntries(colorSeries.map(r=>[r.id,colorMap[r.id]]));
+colorSeries=colorRepos.slice(6,18);
+colorMap=droneTrendColors(colorRepos,[...colorSeries].reverse(),previousColors);
+assert.strictEqual(new Set(colorSeries.map(r=>colorMap[r.id])).size,12);
+colorRepos.slice(6,12).forEach(r=>assert.strictEqual(colorMap[r.id],previousColors[r.id]));
 let states=[],deps=[],effects=[],pending=[],cursor=0,calls=[],reject=false;
 const n={createElement:(type,props,...children)=>({type,props:props||{},children}),
  useRef(v){return this.useState({current:v})[0]},
@@ -17,6 +27,9 @@ function button(label){const found=nodes(tree).find(x=>x.type==='button'&&text(x
 async function flush(){for(let i=0;i<4;i++){await new Promise(r=>realTimeout(r,0));render();}}
 (async()=>{
  render();await flush();let charts=nodes(tree).filter(x=>x.type===DroneTrendChart);assert.strictEqual(charts.length,2);assert(!charts[0].props.queued&&!charts[1].props.queued);
+ assert.strictEqual(charts[0].props.colors,charts[1].props.colors);
+ const repoLabels=nodes(tree).filter(x=>x.type==='label'&&x.props.title);
+ repoLabels.forEach((label,index)=>assert.strictEqual(nodes(label).find(x=>x.type==='i').props.style.background,charts[0].props.colors[index+1]));
  charts[0].props.setQueued(true);render();charts=nodes(tree).filter(x=>x.type===DroneTrendChart);assert(charts[0].props.queued&&!charts[1].props.queued);charts[1].props.setQueued(true);render();assert(nodes(tree).filter(x=>x.type===DroneTrendChart).every(x=>x.props.queued));
  button('7 days').props.onClick();render();await flush();assert(calls.at(-1).includes('hours=168'));
  button('Clear').props.onClick();render();await flush();assert(calls.at(-1).endsWith('&repos='));assert(nodes(tree).filter(x=>x.type===DroneTrendChart).every(x=>x.props.data.series.length===0));

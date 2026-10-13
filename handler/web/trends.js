@@ -1,5 +1,13 @@
 function DroneTrendIcon(){return n.createElement('svg',{width:24,height:24,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.7,'aria-hidden':true},n.createElement('path',{d:'M3 3v18h18M6 15l4-5 4 3 6-8'}));}
-function droneTrendColor(repo){var hash=0;for(var i=0;i<repo.slug.length;i++)hash=(hash*31+repo.slug.charCodeAt(i))>>>0;hash=Math.imul(hash^(hash>>>16),0x7feb352d);hash=Math.imul(hash^(hash>>>15),0x846ca68b);hash=(hash^(hash>>>16))>>>0;return 'hsl('+(hash%360)+', 67%, 47%)';}
+// Reserve distinct palette entries for displayed series before coloring other repositories.
+var droneTrendPalette=['#0072B2','#E66100','#009E73','#CC79A7','#8854D0','#B39400','#00A6B2','#CC3333','#795548','#718096','#687B19','#A83479'];
+function droneTrendColors(repos,series,previous){
+ var colors={},used={};
+ series.forEach(function(repo){var color=previous[repo.id];if(color&& !used[color]){colors[repo.id]=color;used[color]=true;}});
+ series.forEach(function(repo){if(colors[repo.id])return;var color=droneTrendPalette.filter(function(value){return !used[value];})[0];colors[repo.id]=color;used[color]=true;});
+ repos.forEach(function(repo,index){if(!colors[repo.id])colors[repo.id]=previous[repo.id]||droneTrendPalette[index%droneTrendPalette.length];});
+ return colors;
+}
 function droneTrendPath(times,values,column,x,y){var d='',connected=false;for(var i=0;i<times.length;i++){var value=values[i]&&values[i][column];if(value===null||value===undefined){connected=false;continue;}d+=(connected?' L':' M')+x(i).toFixed(2)+','+y(value).toFixed(2);connected=true;}return d;}
 function DroneTrendChart(props){
  var h=n.createElement, host=n.useRef(null), widthState=n.useState(900), width=widthState[0];
@@ -13,7 +21,7 @@ function DroneTrendChart(props){
  for(var i=0;i<=4;i++){drawing.push(h('g',{key:'grid'+i},h('line',{x1:left,x2:width-right,y1:y(i*unit),y2:y(i*unit),className:'dt-grid'}),h('text',{x:left-10,y:y(i*unit)+4,textAnchor:'end',className:'dt-axis'},String(i*unit))));}
  var ticks=width<600?2:4;
  if(times.length)for(var k=0;k<=ticks;k++){var index=Math.round((times.length-1)*k/ticks);drawing.push(h('text',{key:'time'+k,x:x(index),y:height-10,textAnchor:k===0?'start':k===ticks?'end':'middle',className:'dt-axis'},new Date(times[index]*1000).toLocaleString(undefined,props.hours>24?{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}:{hour:'2-digit',minute:'2-digit'})));}
- series.forEach(function(repo){var color=droneTrendColor(repo);drawing.push(h('path',{key:repo.id,d:droneTrendPath(times,repo.values,column,x,y),stroke:color,fill:'none',strokeWidth:2,strokeLinejoin:'round',vectorEffect:'non-scaling-stroke'}));
+ series.forEach(function(repo){var color=props.colors[repo.id];drawing.push(h('path',{key:repo.id,d:droneTrendPath(times,repo.values,column,x,y),stroke:color,fill:'none',strokeWidth:2,strokeLinejoin:'round',vectorEffect:'non-scaling-stroke'}));
  // Preserve visibility of isolated valid samples without bridging gaps.
  repo.values.forEach(function(v,index){if(v[column]!==null && (index===0||repo.values[index-1][column]===null) && (index===times.length-1||repo.values[index+1][column]===null))drawing.push(h('circle',{key:repo.id+'-'+index,cx:x(index),cy:y(v[column]),r:2.5,fill:color}));});
  });
@@ -24,11 +32,12 @@ function DroneTrendChart(props){
  return h('article',{className:'dt-chart',onMouseLeave:function(){props.onHover(null);},onBlur:function(e){if(!e.currentTarget.contains(e.relatedTarget))props.onHover(null);}},h('div',{className:'dt-chart-heading'},h('div',null,h('h2',null,props.title),h('p',null,props.queued?props.column===0?'Running + pending builds':'RUN + PEND · Drone-submitted jobs':props.column===0?'Running builds only':'RUN · Drone-submitted jobs')),
  h('label',{className:'dt-switch'},h('input',{type:'checkbox',checked:props.queued,onChange:function(e){props.setQueued(e.target.checked);}}),' Include queued')),
  h('div',{className:'dt-plot',ref:host},h('svg',{viewBox:'0 0 '+width+' '+height,role:'img',tabIndex:0,'aria-label':props.title+'. Time on X axis, count on Y axis. Arrow keys explore samples.',onMouseMove:locate,onKeyDown:function(e){if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();props.onHover(Math.max(0,Math.min(times.length-1,(hovered===null?times.length-1:hovered)+(e.key==='ArrowLeft'?-1:1))));}}},drawing),noData?h('div',{className:'dt-plot-empty'},noData):null),
- h('div',{className:'dt-tooltip','aria-live':'polite',tabIndex:0,'aria-label':'Sample details'},hovered!==null?[h('strong',{key:'time'},new Date(times[hovered]*1000).toLocaleString()),series.map(function(repo){return h('span',{key:repo.id},h('i',{style:{background:droneTrendColor(repo)}}),repo.slug,h('b',null,repo.values[hovered][column]===null?'No data':repo.values[hovered][column]));})]:h('span',{className:'dt-tooltip-hint'},'Hover over the chart or focus it and use arrow keys to inspect a sample.')),
+ h('div',{className:'dt-tooltip','aria-live':'polite',tabIndex:0,'aria-label':'Sample details'},hovered!==null?[h('strong',{key:'time'},new Date(times[hovered]*1000).toLocaleString()),series.map(function(repo){return h('span',{key:repo.id},h('i',{style:{background:props.colors[repo.id]}}),repo.slug,h('b',null,repo.values[hovered][column]===null?'No data':repo.values[hovered][column]));})]:h('span',{className:'dt-tooltip-hint'},'Hover over the chart or focus it and use arrow keys to inspect a sample.')),
  h('div',{className:'dt-chart-note'},props.data&&props.data.step>30?'Each point is the peak sampled count in a '+props.data.step/60+'-minute interval.':'One sample every 30 seconds.', ' Gaps mean unavailable data.'));
 }
 function DroneTrends(props){
  var h=n.createElement;
+ var colorState=n.useRef({});
  var range=n.useState(6),hours=range[0],setHours=range[1];
  var selection=n.useState(null),selected=selection[0],setSelected=selection[1];
  var result=n.useState(null),data=result[0],setData=result[1];
@@ -43,6 +52,9 @@ function DroneTrends(props){
  at('/api/monitor/trends?hours='+hours+(selected===null?'':'&repos='+encodeURIComponent(key))).then(function(next){if(!active)return;setData(next);setError('');if(selected===null)setSelected(next.series.map(function(repo){return repo.id;}));else{var ids=selected.filter(function(id){return next.repositories.some(function(repo){return repo.id===id;});});if(ids.length!==selected.length)setSelected(ids);}}).catch(function(err){if(active){setData(null);setError('Unable to load trends: '+err.message);}}).then(function(){inflight=false;if(active)busyState[1](false);});}
  load();var timer=setInterval(load,30000);return function(){active=false;clearInterval(timer);};},[hours,key,refresh[0]]);
  var repos=data?data.repositories:[],filtered=repos.filter(function(repo){return repo.slug.toLowerCase().indexOf(search.toLowerCase())>=0;});
+ var colors=data?droneTrendColors(repos,data.series,colorState.current):colorState.current;
+ // Only displayed series reserve their colors when the selection changes.
+ if(data){var reserved={};data.series.forEach(function(repo){reserved[repo.id]=colors[repo.id];});colorState.current=reserved;}
  var chosen=selected||[],stale=data&&(!data.last_sample||Date.now()/1000-data.last_sample>90);
  function toggle(id){setSelected(chosen.indexOf(id)>=0?chosen.filter(function(x){return x!==id;}):chosen.length<12?chosen.concat([id]):chosen);hoverState[1](null);}
  return h('div',{className:'dt-page'},h('style',null,droneTrendsCSS),
@@ -55,8 +67,8 @@ function DroneTrends(props){
  h('div',{className:'dt-layout'},h('aside',{className:'dt-repositories'},h('div',{className:'dt-repo-title'},h('h2',null,'Repositories'),h('span',null,chosen.length+'/12')),
  h('p',null,'Only active repositories you can access.'),h('input',{type:'search',placeholder:'Find a repository…','aria-label':'Find a repository',value:search,onChange:function(e){searchState[1](e.target.value);}}),
  h('div',{className:'dt-repo-actions'},h('button',{type:'button',onClick:function(){setSelected(filtered.slice(0,12).map(function(repo){return repo.id;}));}},'Select first 12'),h('button',{type:'button',onClick:function(){setSelected([]);}},'Clear')),
- h('div',{className:'dt-repo-list'},filtered.map(function(repo){return h('label',{key:repo.id,title:repo.slug},h('input',{type:'checkbox',checked:chosen.indexOf(repo.id)>=0,disabled:chosen.length>=12&&chosen.indexOf(repo.id)<0,onChange:function(){toggle(repo.id);}}),h('i',{style:{background:droneTrendColor(repo)}}),h('span',null,repo.slug));}),!filtered.length?h('p',null,'No matching repositories.'):null),
+ h('div',{className:'dt-repo-list'},filtered.map(function(repo){return h('label',{key:repo.id,title:repo.slug},h('input',{type:'checkbox',checked:chosen.indexOf(repo.id)>=0,disabled:chosen.length>=12&&chosen.indexOf(repo.id)<0,onChange:function(){toggle(repo.id);}}),h('i',{style:{background:colors[repo.id]}}),h('span',null,repo.slug));}),!filtered.length?h('p',null,'No matching repositories.'):null),
  h('p',{className:'dt-retention'},'7-day history',h('br'),'Counts are sampled, not a complete job audit.')),
- h('div',{className:'dt-charts'},h(DroneTrendChart,{title:'Builds processing',data:data,hours:hours,column:0,queued:builds[0],setQueued:builds[1],hover:hoverState[0],onHover:hoverState[1]}),h(DroneTrendChart,{title:'LSF jobs processing',data:data,hours:hours,column:2,queued:jobs[0],setQueued:jobs[1],hover:hoverState[0],onHover:hoverState[1]}))),
+ h('div',{className:'dt-charts'},h(DroneTrendChart,{title:'Builds processing',data:data,colors:colors,hours:hours,column:0,queued:builds[0],setQueued:builds[1],hover:hoverState[0],onHover:hoverState[1]}),h(DroneTrendChart,{title:'LSF jobs processing',data:data,colors:colors,hours:hours,column:2,queued:jobs[0],setQueued:jobs[1],hover:hoverState[0],onHover:hoverState[1]}))),
  h('p',{className:'dt-footnote'},'Same repository, same color in both charts. LSF counts represent bsub jobs, not CPU cores. Only jobs submitted by Drone after tracking was enabled are included.'));
 }
