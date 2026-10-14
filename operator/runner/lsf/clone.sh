@@ -12,36 +12,42 @@ trace() {
     printf '\033[32m+ %s\033[0;37m\n' "$1"
 }
 
-# Preserve the step's inherited HOME. Only native clone Git subprocesses use
-# private CI askpass; never overwrite the account's ~/.netrc or Git config.
+# Keep native clone configuration private, even for anonymous repositories.
+# Ordinary steps retain their account HOME and Git configuration.
+clone_config_home=''
 cleanup_auth() {
     if [ -n "${DRONE_LSF_CLONE_AUTH_DIR:-}" ]; then
         /bin/rm -rf -- "$DRONE_LSF_CLONE_AUTH_DIR"
+    fi
+    if [ -n "$clone_config_home" ]; then
+        /bin/rm -rf -- "$clone_config_home"
     fi
 }
 trap cleanup_auth EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 clone_git=$(command -v git)
+clone_config_home=$(mktemp -d "${TMPDIR:-/tmp}/drone-clone-home.XXXXXX") || fail 'Cannot create isolated Git configuration directory'
 git() {
-    if [ -n "${DRONE_LSF_CLONE_AUTH_DIR:-}" ]; then
-        (
-            # Git's verbose HTTP diagnostics can contain Authorization headers.
-            unset GIT_CURL_VERBOSE GIT_TRACE GIT_TRACE_CURL GIT_TRACE_PACKET GIT_TRACE_SETUP GIT_TRACE2 GIT_TRACE2_EVENT GIT_TRACE2_PERF GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
-            export HOME="$DRONE_LSF_CLONE_AUTH_DIR/home"
-            # Git 2.8 treats an empty credential.helper as a helper named "".
-            # Isolate config sources instead of using the newer reset syntax.
-            # HOME alone does not isolate an explicitly inherited XDG path.
-            export XDG_CONFIG_HOME="$HOME/.config"
-            export GIT_CONFIG_NOSYSTEM=1
-            export GIT_CONFIG_GLOBAL=/dev/null
+    (
+        # Git's verbose HTTP diagnostics can contain Authorization headers.
+        unset GIT_CURL_VERBOSE GIT_TRACE GIT_TRACE_CURL GIT_TRACE_PACKET GIT_TRACE_SETUP GIT_TRACE2 GIT_TRACE2_EVENT GIT_TRACE2_PERF GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_CONFIG
+        export HOME="$clone_config_home"
+        # Git 2.8 treats an empty credential.helper as a helper named "".
+        # Isolate config sources instead of using the newer reset syntax.
+        # HOME alone does not isolate an explicitly inherited XDG path.
+        export XDG_CONFIG_HOME="$HOME/.config"
+        export GIT_CONFIG_NOSYSTEM=1
+        export GIT_CONFIG_GLOBAL=/dev/null
+        export GIT_TERMINAL_PROMPT=0 LC_ALL=C
+        if [ -n "${DRONE_LSF_CLONE_AUTH_DIR:-}" ]; then
             export GIT_ASKPASS="$DRONE_LSF_CLONE_AUTH_DIR/askpass"
-            export GIT_TERMINAL_PROMPT=0 LC_ALL=C
-            exec "$clone_git" -c credential.useHttpPath=false "$@"
-        )
-    else
-        "$clone_git" "$@"
-    fi
+        else
+            # An anonymous clone must not prompt or use an account's askpass.
+            export GIT_ASKPASS=/bin/false
+        fi
+        exec "$clone_git" -c credential.useHttpPath=false "$@"
+    )
 }
 
 printf '[clone] Host: %s\n' "$(hostname)"
@@ -82,8 +88,10 @@ has_commit() {
     [ "$(git cat-file -t "$sha" 2>/dev/null)" = commit ]
 }
 
-trace 'git init .'
-git init .
+# Disable templates explicitly: GIT_TEMPLATE_DIR can otherwise copy account
+# credential helpers and hooks into the new repository's local config.
+trace 'git init --template= .'
+git init --template= .
 trace 'git remote add origin "$DRONE_REMOTE_URL"'
 git remote add origin "$DRONE_REMOTE_URL"
 

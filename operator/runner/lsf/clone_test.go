@@ -127,6 +127,7 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 				{name: "ref-fallback-unshallow", sha: first, ref: "refs/heads/main", depth: 1, forceRef: true},
 				{name: "annotated-tag", sha: first, ref: "refs/tags/v1", depth: 1},
 				{name: "pull-ref", sha: tip, ref: "refs/pull/7/head", depth: 1},
+				{name: "authenticated-pull-ref", sha: tip, ref: "refs/pull/7/head", auth: true},
 				{name: "authenticated-wrong-token", sha: tip, ref: "refs/heads/main", auth: true, badToken: true, fail: true},
 				{name: "authenticated-shallow-advanced", sha: first, ref: "refs/heads/main", depth: 1, auth: true},
 				{name: "unavailable-commit", sha: strings.Repeat("f", 40), ref: "refs/heads/main", depth: 1, fail: true},
@@ -139,6 +140,7 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 				t.Run(tc.name, func(t *testing.T) {
 					dir := t.TempDir()
 					home := t.TempDir()
+					tmp := t.TempDir()
 					script := filepath.Join(t.TempDir(), "clone.sh")
 					if err := os.WriteFile(script, []byte(nativeCloneScript(tc.depth)), 0600); err != nil {
 						t.Fatal(err)
@@ -157,35 +159,43 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 					defer cancel()
 					cmd := exec.CommandContext(ctx, "/bin/sh", "-e", script)
 					cmd.Dir = dir
-					cmd.Env = []string{"HOME=" + home, "GIT_EXEC_PATH=" + clientExecPath(t, clientPath), "PATH=" + filepath.Dir(clientPath) + ":/usr/bin:/bin", "LC_ALL=C",
+					cmd.Env = []string{"TMPDIR=" + tmp, "HOME=" + home, "GIT_EXEC_PATH=" + clientExecPath(t, clientPath), "PATH=" + filepath.Dir(clientPath) + ":/usr/bin:/bin", "LC_ALL=C",
 						"GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "DRONE_REMOTE_URL=" + remote,
 						"DRONE_COMMIT_SHA=" + tc.sha, "DRONE_COMMIT_REF=" + tc.ref}
 					accountNetrc := "machine 127.0.0.1 login personal password do-not-change\n"
 					authDir := filepath.Join(t.TempDir(), "auth")
 					helperMarker := filepath.Join(t.TempDir(), "helper-called")
+					// Inherited helpers must neither supply credentials nor store the
+					// Drone token, including Git 2.8's separate XDG config source.
+					helper := filepath.Join(t.TempDir(), "credential-helper")
+					if err := os.WriteFile(helper, []byte("#!/bin/sh\n: > "+quote(helperMarker)+"\n"), 0700); err != nil {
+						t.Fatal(err)
+					}
+					xdg := t.TempDir()
+					if err := os.Mkdir(filepath.Join(xdg, "git"), 0700); err != nil {
+						t.Fatal(err)
+					}
+					systemConfig := filepath.Join(t.TempDir(), "gitconfig")
+					for _, path := range []string{filepath.Join(home, ".gitconfig"), filepath.Join(xdg, "git", "config"), systemConfig} {
+						if err := os.WriteFile(path, []byte("[credential]\n\thelper =\n\thelper = "+helper+"\n[url \"http://127.0.0.1:1/\"]\n\tinsteadOf = http://127.0.0.1:\n"), 0600); err != nil {
+							t.Fatal(err)
+						}
+					}
+					// GIT_CONFIG_SYSTEM is supported by modern Git; Git 2.8 still
+					// exercises HOME, XDG and command-line config isolation.
+					cmd.Env = append(cmd.Env, "XDG_CONFIG_HOME="+xdg, "GIT_CONFIG_GLOBAL="+filepath.Join(home, ".gitconfig"),
+						"GIT_CONFIG_NOSYSTEM=0", "GIT_CONFIG_SYSTEM="+systemConfig,
+						"GIT_CONFIG_PARAMETERS="+quote("credential.helper="+helper),
+						"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=credential.helper", "GIT_CONFIG_VALUE_0="+helper)
+					template := t.TempDir()
+					if err := os.WriteFile(filepath.Join(template, "config"), []byte("[credential]\n\thelper =\n\thelper = "+helper+"\n"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(template, "template-marker"), []byte("must not be copied"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					cmd.Env = append(cmd.Env, "GIT_TEMPLATE_DIR="+template)
 					if tc.auth {
-						// Inherited helpers must neither supply credentials nor store the
-						// Drone token, including Git 2.8's separate XDG config source.
-						helper := filepath.Join(t.TempDir(), "credential-helper")
-						if err := os.WriteFile(helper, []byte("#!/bin/sh\n: > "+quote(helperMarker)+"\n"), 0700); err != nil {
-							t.Fatal(err)
-						}
-						xdg := t.TempDir()
-						if err := os.Mkdir(filepath.Join(xdg, "git"), 0700); err != nil {
-							t.Fatal(err)
-						}
-						systemConfig := filepath.Join(t.TempDir(), "gitconfig")
-						for _, path := range []string{filepath.Join(home, ".gitconfig"), filepath.Join(xdg, "git", "config"), systemConfig} {
-							if err := os.WriteFile(path, []byte("[credential]\n\thelper = "+helper+"\n"), 0600); err != nil {
-								t.Fatal(err)
-							}
-						}
-						// GIT_CONFIG_SYSTEM is supported by modern Git; Git 2.8 still
-						// exercises HOME, XDG and command-line config isolation.
-						cmd.Env = append(cmd.Env, "XDG_CONFIG_HOME="+xdg, "GIT_CONFIG_GLOBAL="+filepath.Join(home, ".gitconfig"),
-							"GIT_CONFIG_NOSYSTEM=0", "GIT_CONFIG_SYSTEM="+systemConfig,
-							"GIT_CONFIG_PARAMETERS="+quote("credential.helper="+helper),
-							"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=credential.helper", "GIT_CONFIG_VALUE_0="+helper)
 						if err := os.WriteFile(filepath.Join(home, ".netrc"), []byte(accountNetrc), 0600); err != nil {
 							t.Fatal(err)
 						}
@@ -202,13 +212,19 @@ func TestNativeCloneHTTPCompatibility(t *testing.T) {
 					if ctx.Err() != nil || (err != nil) != tc.fail {
 						t.Fatalf("unexpected result: %v (context %v)\n%s", err, ctx.Err(), out)
 					}
+					if entries, err := os.ReadDir(tmp); err != nil || len(entries) != 0 {
+						t.Fatalf("temporary clone HOME retained: %v %v", entries, err)
+					}
+					if _, err := os.Stat(filepath.Join(dir, ".git", "template-marker")); !os.IsNotExist(err) {
+						t.Fatal("Git template was copied into the workspace")
+					}
+					if strings.Contains(string(out), "git: 'credential-' is not a git command") {
+						t.Fatalf("empty credential helper invoked\n%s", out)
+					}
+					if _, err := os.Stat(helperMarker); !os.IsNotExist(err) {
+						t.Fatal("inherited credential helper was invoked")
+					}
 					if tc.auth {
-						if strings.Contains(string(out), "git: 'credential-' is not a git command") {
-							t.Fatalf("empty credential helper invoked\n%s", out)
-						}
-						if _, err := os.Stat(helperMarker); !os.IsNotExist(err) {
-							t.Fatal("inherited credential helper was invoked")
-						}
 						if _, err := os.Stat(authDir); !os.IsNotExist(err) {
 							t.Fatal("clone credentials retained")
 						}

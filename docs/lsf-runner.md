@@ -115,6 +115,8 @@ Ref fallback 必須有合法的完整 `DRONE_COMMIT_REF`；不會猜測 `master`
 
 原生 clone 先透過 `SHELL_TYPE` / `DRONE_LSF_SHELL` 選定的 shell 初始化環境，再將匯出的環境交給固定的 `/bin/sh` 執行 clone 腳本，以明確處理 fetch 失敗。停用初始化且未設定 `SHELL_OPTION` 時，clone 直接使用 `/bin/sh`，不要求初始化 shell 存在。有指定 options 時仍會啟動所選 shell，options 只作用於這一層，不會轉傳給 clone 的 POSIX 腳本。Drone 提供的 HTTP 認證由專用 askpass 處理；SSL verify 與 LSF resource 設定照常生效。
 
+原生 clone 無論是否有 Drone 認證，都使用暫存 HOME、獨立 XDG 路徑，並隔離帳號／系統 Git config 與透過環境注入的 Git config。`git init --template= .` 不載入 Git template，避免 template 將 credential helpers 或 hooks 複製到 `.git`。Git 路徑仍由 shell 初始化後的 PATH 決定；一般 command steps 的 HOME 與 Git config 不變。原生 clone 不使用帳號的 `.netrc`、credential helper 或 askpass；需要 HTTP 認證時由 Drone 提供，公開 repo 也需認證時可設定 `DRONE_GIT_ALWAYS_AUTH=true`。暫存 HOME 在 clone 成功或失敗時刪除。部署若依賴帳號 Git config 中的 proxy／CA 設定，需改由明確的 Git／HTTP 環境設定提供。
+
 Clone 在執行主要 Git 指令前，以與一般 steps 相同的綠色 `+ command` 顯示指令；ref fallback 與完整歷史補抓只在實際執行時顯示。指令中的 URL、SHA、ref 使用原本的環境變數名稱呈現，避免 trace 展開 URL 中可能存在的認證資訊；`[clone]` 診斷與結果仍保留。
 
 CI 使用 upstream Git 2.8.0（連結實際 libcurl 7.19.7）、Git 2.43.0 與目前 Git，透過 smart HTTP 測試 branch、分支前進、shallow history、annotated tag、PR ref、194 字元 token、錯誤認證、缺少 commit / ref 與拒絕存取，並確認 HEAD 處於 detached 狀態。另以 curl 7.19.7 重現相同長 token 在 `.netrc` 下得到 HTTP 401、直接提供認證時得到 HTTP 200。測試工具只安裝於 CI 暫存目錄；舊 libcurl 為 HTTP-only 測試 build，不隨 server 發布，也不取代系統 Git / libcurl。LSF 生命週期使用 mock 驗證；Production 的 RHEL backport、TLS 與 Gitea 設定仍需 UAT 驗證。
