@@ -2,6 +2,8 @@ package lsf
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,7 +46,13 @@ func TestDebugEnvironmentSnapshot(t *testing.T) {
 				}
 				step := spec.Steps[0]
 				step.WorkingDir = "nested work"
-				secret := "managed-private-value"
+				// Generate a test-only value at runtime to exercise secret exclusion
+				// without embedding a credential-like constant in the source.
+				var secretBytes [32]byte
+				if _, err := rand.Read(secretBytes[:]); err != nil {
+					t.Fatalf("generate test secret: %v", err)
+				}
+				secret := hex.EncodeToString(secretBytes[:])
 				step.Secrets = append(step.Secrets, &engine.SecretVar{Name: "test-secret", Env: "SECRET_VALUE"})
 				spec.Secrets = append(spec.Secrets, &engine.Secret{Metadata: engine.Metadata{Name: "test-secret"}, Data: secret})
 				step.Envs["COPIED_SECRET"] = "prefix-" + secret + "-suffix"
