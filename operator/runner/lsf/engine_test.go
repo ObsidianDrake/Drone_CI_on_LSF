@@ -35,7 +35,7 @@ func testEngine(t *testing.T) *Engine {
 	t.Setenv("LSF_MOCK_STATE_DIR", t.TempDir())
 	t.Setenv("LSF_MOCK_EXEC_HOME", t.TempDir())
 	e, err := New(Config{Bsub: filepath.Join(bin, "bsub"), Bjobs: filepath.Join(bin, "bjobs"), Bkill: filepath.Join(bin, "bkill"),
-		Workspace: filepath.Join(t.TempDir(), "workspace with spaces"), Shell: shell, PollInterval: 20 * time.Millisecond, CommandTimeout: 3 * time.Second, CleanupTimeout: 3 * time.Second})
+		Workspace: filepath.Join(t.TempDir(), "workspace with spaces"), Shell: shell, LogQuietPeriod: 40 * time.Millisecond, LogDrainTimeout: time.Second, PollInterval: 20 * time.Millisecond, CommandTimeout: 3 * time.Second, CleanupTimeout: 3 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}

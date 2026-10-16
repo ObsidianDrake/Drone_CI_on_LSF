@@ -16,12 +16,15 @@ package runtime
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"sync"
 	"time"
 
 	"github.com/drone/drone-runtime/engine"
 	"github.com/natessilva/dag"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -275,12 +278,25 @@ func stream(state *State, rc io.ReadCloser) error {
 	defer rc.Close()
 
 	w := newWriter(state)
-	io.Copy(w, rc)
-
-	if state.hook.GotLogs != nil {
-		return state.hook.GotLogs(state, w.lines)
+	count, readErr := io.Copy(w, rc)
+	if readErr != nil {
+		logrus.WithError(readErr).WithField("step", state.Step.Metadata.Name).
+			WithField("bytes", count).Warn("runner: cannot read complete step log")
+		readErr = fmt.Errorf("step %s: reading log after %d bytes: %w", state.Step.Metadata.Name, count, readErr)
 	}
-	return nil
+
+	// Preserve the collected portion even if reading failed, but never report
+	// the partial upload as a successful complete stream.
+	var uploadErr error
+	if state.hook.GotLogs != nil {
+		uploadErr = state.hook.GotLogs(state, w.lines)
+		if uploadErr != nil {
+			logrus.WithError(uploadErr).WithField("step", state.Step.Metadata.Name).
+				Warn("runner: cannot store complete step log")
+			uploadErr = fmt.Errorf("step %s: storing log: %w", state.Step.Metadata.Name, uploadErr)
+		}
+	}
+	return errors.Join(readErr, uploadErr)
 }
 
 // Detached and parallel steps can snapshot state while another step fails.

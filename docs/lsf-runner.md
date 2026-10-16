@@ -238,7 +238,11 @@ YAML 中可確定的衝突會在 lint 時回報 step 名稱、`SHELL_OPTION` 與
 - `bjobs -a -noheader -o 'stat exit_code' <ID>`：`DONE` 對應成功，`EXIT` 回報退出碼；缺少有效退出碼時視為 `1`。等待、執行與暫停狀態持續輪詢。
 - `bkill <ID>`：取消或 pipeline 逾時時呼叫，之後持續確認終止。查詢連續失敗三次也會進入取消收尾，避免失聯工作持續執行。
 
-輸出直接寫入共享目錄並串流到 Drone；不依賴 LSF 最後才回傳的 spool log。LSF 自己的啟動診斷位於 step 目錄的 `scheduler.out` / `scheduler.err`。正常收尾會清除工作目錄。若 `bsub` 回應不明或無法確認 job 終止，會保留目錄並記錄錯誤，需依 server log 中的 job ID 或保留目錄名稱人工核對 LSF 狀態；server 重啟後尚無自動恢復 job 追蹤。
+輸出直接寫入共享目錄並串流到 Drone；不依賴 LSF 最後才回傳的 spool log。
+
+Job 結束後，runner 會重新開啟 `output.log` 並從已讀取的位元組位置繼續補讀，直到連續 2 秒沒有新增內容；收尾最多等待 15 秒，避免共享磁碟延遲更新時立即把暫時的檔尾當成完整輸出。這是有限時間的穩定檢查，無法保證捕捉超過穩定期間才可見的寫入。一般 step 因此會多約 2 秒收尾時間。讀取失敗、檔案縮短或收尾逾時會回報錯誤並保留工作目錄；已讀取部分仍嘗試儲存到 Drone，儲存失敗也會記錄 server log。Detached step 同樣會先完成檔案補讀再清理目錄。每個 step 既有的約 5 MiB log 上限不變。
+
+LSF 自己的啟動診斷位於 step 目錄的 `scheduler.out` / `scheduler.err`。正常收尾會清除工作目錄。若 `bsub` 回應不明或無法確認 job 終止，會保留目錄並記錄錯誤，需依 server log 中的 job ID 或保留目錄名稱人工核對 LSF 狀態；server 重啟後尚無自動恢復 job 追蹤。
 
 ### Step 環境與巢狀 bsub
 

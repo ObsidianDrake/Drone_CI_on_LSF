@@ -76,7 +76,8 @@ func (e *LifecycleEngine) Destroy(ctx context.Context, spec *engine.Spec) error 
 		}
 	}
 	// Cancel/kill jobs first; waiting for log EOF before this would deadlock
-	// on a long-running service. The open log descriptor survives RemoveAll.
+	// on a long-running service. The backend drains active file readers before
+	// removing their paths; upload completion is joined below.
 	e.CleanupErr = e.Engine.Destroy(ctx, spec)
 	e.DetachedResults = make(map[*engine.Step]DetachedResult)
 	for step, j := range jobs {

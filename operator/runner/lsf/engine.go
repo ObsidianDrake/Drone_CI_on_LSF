@@ -2,9 +2,9 @@
 package lsf
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -31,6 +31,7 @@ type Config struct {
 	Slots                                        int
 	PollInterval, CommandTimeout, CleanupTimeout time.Duration
 	DebugRetention, DebugCleanupInterval         time.Duration
+	LogQuietPeriod, LogDrainTimeout              time.Duration
 }
 
 type Engine struct {
@@ -64,6 +65,8 @@ type job struct {
 	confirmed             bool // scheduler confirmed the job is terminal
 	stoppedByRunner       bool
 	finished              time.Time
+	logDone               chan struct{} // registered under pipeline.mu
+	logErr                error         // published by closing logDone
 }
 
 var _ engine.Engine = (*Engine)(nil)
@@ -100,6 +103,15 @@ func New(config Config) (*Engine, error) {
 	}
 	if config.CleanupTimeout == 0 {
 		config.CleanupTimeout = time.Minute
+	}
+	if config.LogQuietPeriod == 0 {
+		config.LogQuietPeriod = 2 * time.Second
+	}
+	if config.LogDrainTimeout == 0 {
+		config.LogDrainTimeout = 15 * time.Second
+	}
+	if config.LogQuietPeriod < 0 || config.LogDrainTimeout < config.LogQuietPeriod {
+		return nil, fmt.Errorf("lsf: log drain timeout must be at least the positive quiet period")
 	}
 	if config.DebugRetention == 0 {
 		config.DebugRetention = 7 * 24 * time.Hour
@@ -580,55 +592,33 @@ func (e *Engine) Wait(ctx context.Context, spec *engine.Spec, step *engine.Step)
 }
 
 func (e *Engine) Tail(ctx context.Context, spec *engine.Spec, step *engine.Step) (io.ReadCloser, error) {
-	j, err := e.findJob(spec, step)
+	p, err := e.lookup(spec)
 	if err != nil {
 		return nil, err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	j := p.jobs[step]
+	if p.destroyed || j == nil || j.id == "" || j.logDone != nil {
+		return nil, fmt.Errorf("lsf: step log is unavailable or already being read")
 	}
 	file, err := os.Open(j.log)
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithCancel(ctx)
 	reader, writer := io.Pipe()
+	j.logDone = make(chan struct{})
 	go func() {
-		defer file.Close()
-		defer writer.Close()
-		buf := make([]byte, 32*1024)
-		finished := false
-		for {
-			n, err := file.Read(buf)
-			if n > 0 {
-				// The legacy runtime creates an extra empty record when a write
-				// contains multiple newline-terminated lines. Pipe writes stay
-				// separate for its io.Copy reader: send one line fragment at a time.
-				for _, part := range bytes.SplitAfter(buf[:n], []byte{'\n'}) {
-					if len(part) == 0 {
-						continue
-					}
-					if _, err := writer.Write(part); err != nil {
-						return
-					}
-				}
-			}
-			if err != nil && err != io.EOF {
-				writer.CloseWithError(err)
-				return
-			}
-			if n > 0 {
-				continue
-			}
-			if finished {
-				return
-			}
-			select {
-			case <-j.done:
-				finished = true // one final read drains the completed log
-			case <-ctx.Done():
-				return
-			case <-time.After(e.config.PollInterval):
-			}
+		defer close(j.logDone)
+		defer cancel()
+		j.logErr = drainLog(ctx, file, writer, j.done, e.config.PollInterval, e.config.LogQuietPeriod, e.config.LogDrainTimeout)
+		if j.logErr != nil {
+			logrus.WithError(j.logErr).WithField("job", j.id).Warn("lsf: cannot collect complete step log")
 		}
+		writer.CloseWithError(j.logErr)
 	}()
-	return reader, nil
+	return &logReader{PipeReader: reader, cancel: cancel}, nil
 }
 
 func (e *Engine) Destroy(ctx context.Context, spec *engine.Spec) error {
@@ -640,7 +630,11 @@ func (e *Engine) Destroy(ctx context.Context, spec *engine.Spec) error {
 	p.mu.Lock()
 	p.destroyed = true
 	var jobs []*job
+	var logJobs []*job
 	for _, j := range p.jobs {
+		if j.logDone != nil {
+			logJobs = append(logJobs, j)
+		}
 		if j.id != "" {
 			jobs = append(jobs, j)
 		}
@@ -655,6 +649,16 @@ func (e *Engine) Destroy(ctx context.Context, spec *engine.Spec) error {
 		}
 		if !j.confirmed {
 			cleanupErr = fmt.Errorf("lsf: job %s termination unconfirmed; retained %s: %v", j.id, p.dir, j.err)
+		}
+	}
+	// Keep paths available for close-to-open refreshes while detached streams
+	// drain. Waiting only for the scheduler would race the final log reads.
+	for _, j := range logJobs {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-j.logDone:
+			cleanupErr = errors.Join(cleanupErr, j.logErr)
 		}
 	}
 	defer func() {

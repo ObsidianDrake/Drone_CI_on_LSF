@@ -112,7 +112,7 @@ func TestDetachedPendingCleanup(t *testing.T) {
 			}
 			bjobs := command("bjobs", status)
 			workspace := filepath.Join(dir, "work")
-			e, err := New(Config{Bsub: bsub, Bjobs: bjobs, Bkill: bkill, Shell: "/bin/sh", Workspace: workspace, PollInterval: 5 * time.Millisecond, CommandTimeout: time.Second, CleanupTimeout: 100 * time.Millisecond})
+			e, err := New(Config{Bsub: bsub, Bjobs: bjobs, Bkill: bkill, Shell: "/bin/sh", Workspace: workspace, LogQuietPeriod: 20 * time.Millisecond, LogDrainTimeout: time.Second, PollInterval: 5 * time.Millisecond, CommandTimeout: time.Second, CleanupTimeout: 100 * time.Millisecond})
 			if err != nil {
 				t.Fatal(err)
 			}
