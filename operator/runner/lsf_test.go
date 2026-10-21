@@ -82,7 +82,9 @@ func TestLSFRunnerLifecycle(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Setenv("LSF_MOCK_STATE_DIR", t.TempDir())
-			e, err := lsf.New(lsf.Config{Bsub: filepath.Join(bin, "bsub"), Bjobs: filepath.Join(bin, "bjobs"), Bkill: filepath.Join(bin, "bkill"), Shell: shell, Workspace: t.TempDir(), PollInterval: 20 * time.Millisecond, CommandTimeout: 3 * time.Second, CleanupTimeout: 3 * time.Second})
+			e, err := lsf.New(lsf.Config{Bsub: filepath.Join(bin, "bsub"), Bjobs: filepath.Join(bin, "bjobs"), Bkill: filepath.Join(bin, "bkill"), Shell: shell, Workspace: t.TempDir(), PollInterval: 20 * time.Millisecond, CommandTimeout: 3 * time.Second, CleanupTimeout: 3 * time.Second,
+				// The mock leaves scheduler.out empty; keep report draining within the test deadline.
+				LogQuietPeriod: 40 * time.Millisecond, LogDrainTimeout: time.Second})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -227,7 +229,9 @@ func TestCompanyYAMLClonesWebhookCommit(t *testing.T) {
 	}
 	// Keep the company's original schema and add assertions against the checkout.
 	raw = append(raw, []byte("      - git rev-parse HEAD\n      - cat tracked\n")...)
-	e, err := lsf.New(lsf.Config{Bsub: filepath.Join(bin, "bsub"), Bjobs: filepath.Join(bin, "bjobs"), Bkill: filepath.Join(bin, "bkill"), Workspace: t.TempDir(), Queue: "runner-default", PollInterval: 20 * time.Millisecond, CommandTimeout: 3 * time.Second, CleanupTimeout: 3 * time.Second})
+	e, err := lsf.New(lsf.Config{Bsub: filepath.Join(bin, "bsub"), Bjobs: filepath.Join(bin, "bjobs"), Bkill: filepath.Join(bin, "bkill"), Workspace: t.TempDir(), Queue: "runner-default", PollInterval: 20 * time.Millisecond, CommandTimeout: 3 * time.Second, CleanupTimeout: 3 * time.Second,
+		// The mock leaves scheduler.out empty; keep report draining within the test deadline.
+		LogQuietPeriod: 40 * time.Millisecond, LogDrainTimeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}

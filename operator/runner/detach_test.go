@@ -64,7 +64,9 @@ func TestLSFDetachedLifecycle(t *testing.T) {
 				bsub = "/bin/false"
 			}
 			e, err := lsf.New(lsf.Config{Bsub: bsub, Bjobs: filepath.Join(bin, "bjobs"), Bkill: filepath.Join(bin, "bkill"),
-				Shell: shell, Workspace: workspace, PollInterval: 20 * time.Millisecond, CommandTimeout: 3 * time.Second, CleanupTimeout: 3 * time.Second})
+				Shell: shell, Workspace: workspace, PollInterval: 20 * time.Millisecond, CommandTimeout: 3 * time.Second, CleanupTimeout: 3 * time.Second,
+				// The mock leaves scheduler.out empty; keep report draining within the test deadline.
+				LogQuietPeriod: 40 * time.Millisecond, LogDrainTimeout: time.Second})
 			if err != nil {
 				t.Fatal(err)
 			}
