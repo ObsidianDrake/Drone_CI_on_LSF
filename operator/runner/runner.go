@@ -634,6 +634,10 @@ func (r *Runner) Start(ctx context.Context, n int) error {
 	var g errgroup.Group
 	if backend, ok := r.Engine.(*lsf.Engine); ok && n > 0 {
 		g.Go(func() error {
+			backend.RunJobCleanup(ctx)
+			return nil
+		})
+		g.Go(func() error {
 			backend.RunDebugCleanup(ctx)
 			return nil
 		})

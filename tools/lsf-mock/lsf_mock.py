@@ -228,7 +228,7 @@ def jobs(argv):
     parser.add_argument("-l", action="store_true", help="long job details")
     parser.add_argument("-json", action="store_true", help="mock-specific JSON output")
     parser.add_argument("-noheader", action="store_true")
-    parser.add_argument("-o", choices=("stat exit_code", "jobid stat", "jobid stat job_name", "jobid stat job_name:250"))
+    parser.add_argument("-o", choices=("stat exit_code", "jobid stat", "jobid stat job_name", "jobid stat job_name:250", "command"))
     parser.add_argument("ids", nargs="*", type=int)
     args = parser.parse_args(argv)
     with locked():
@@ -250,6 +250,8 @@ def jobs(argv):
         for job in records:
             if args.o in ("jobid stat job_name", "jobid stat job_name:250"):
                 print(f"{job['id']} {job['status']} {job['name']}")
+            elif args.o == "command":
+                print(job["command"])
             elif args.o == "jobid stat":
                 print(f"{job['id']} {job['status']}")
             else:

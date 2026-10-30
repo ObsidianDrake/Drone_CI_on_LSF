@@ -389,3 +389,14 @@ SQL store 將分配編號與建立 build/stages 合併為同一筆交易，
 為符合 monitor 儲存與查詢欄寬，總長度上限為 250 bytes；過長時縮短各名稱部分，
 附上短雜湊並保留 build number。一般長度的名稱不會附加亂數。
 Runner 及 monitor 仍以 LSF job ID 查詢、追蹤與取消，monitor 保存的名稱與提交名稱一致。
+
+
+### 未確認終止的 LSF job 自動重試
+
+當取消 pipeline 或 LSF 狀態查詢連續失敗時，runner 會先在該 step 目錄原子寫入權限為 `0600` 的 `.drone-lsf-cleanup.json`，記錄直接提交的 job ID 與唯一的 wrapper 路徑，再嘗試停止 job。停止前的狀態查詢使用獨立 command timeout，避免慢查詢耗盡整段 cleanup deadline，使第一次 `bkill` 無法執行。
+
+前景清理超過 `DRONE_LSF_CLEANUP_TIMEOUT` 後，build 仍會回報失敗，但錯誤中會顯示 `background cleanup pending`；不再把未確認停止的 job 假設為已退出且 exit code 為 137。server 啟動 runner 時及之後每 30 秒啟動一輪背景掃描，接續處理持久化的待清理紀錄。每次 LSF 指令受 `DRONE_LSF_COMMAND_TIMEOUT` 限制；掃描時間依待處理數量與 LSF 回應時間增加。server 停機時不執行，重啟後須沿用原本的 workspace、LSF cluster 與服務帳號。
+
+背景清理只針對 Drone 自己提交的 jobs，不掃描或管理巢狀 QC jobs。重試前透過 `bjobs -a -noheader -o command JOB_ID` 核對唯一的執行腳本路徑，避免數字 job ID 重用後誤殺其他工作。僅在 LSF 回報 `DONE` 或 `EXIT` 後解除追蹤並刪除 clone 認證資料；異常工作的其他檔案保留供查案，不自動列入 Debug 到期刪除。若 job 查不到、指令不支援或腳本身分不符，不視為已停止，保留紀錄並輸出警告以便人工查核。
+
+此機制只接續新版建立的待清理紀錄；升級前已遺留且沒有紀錄的 jobs 不會自動接管。若寫入紀錄失敗，仍嘗試前景停止，但會明確回報需要人工清理。

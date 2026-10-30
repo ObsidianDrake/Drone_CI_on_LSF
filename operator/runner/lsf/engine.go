@@ -490,6 +490,9 @@ func (e *Engine) status(ctx context.Context, id string) (engine.State, bool, err
 func (e *Engine) monitor(p *pipeline, j *job) {
 	defer func() {
 		if j.confirmed && j.dir != "" {
+			if err := os.Remove(filepath.Join(j.dir, pendingCleanupFile)); err != nil && !os.IsNotExist(err) {
+				logrus.WithError(err).Warn("lsf: cannot remove completed cleanup record")
+			}
 			if err := os.RemoveAll(filepath.Join(j.dir, "clone-auth")); err != nil {
 				logrus.WithError(err).Warn("lsf: cannot remove clone credentials")
 			}
@@ -533,17 +536,22 @@ func (e *Engine) monitor(p *pipeline, j *job) {
 		case <-time.After(e.config.PollInterval):
 		}
 	}
-	// bkill only acknowledges a request. Confirm termination before removing files.
+	// Publish recovery state before the first cancellation attempt.
+	recovery := "background cleanup pending"
+	if err := savePendingCleanup(j); err != nil {
+		recovery = "cleanup record could not be saved; manual cleanup required"
+		logrus.WithError(err).WithField("job", j.id).Error("lsf: cannot persist pending cleanup; restart recovery unavailable")
+	}
+	// Observe a naturally finished service before killing it, with an independent
+	// command budget so a slow query cannot consume the kill attempt's deadline.
+	if state, done, _ := e.status(context.Background(), j.id); done {
+		j.state, j.confirmed = state, true
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), e.config.CleanupTimeout)
 	defer cancel()
 	var killErr error
 	for ctx.Err() == nil {
-		// A service may have exited just before shutdown. Observe its result
-		// before requesting a kill so a natural failure is not called cleanup.
-		if state, done, _ := e.status(ctx, j.id); done {
-			j.state, j.confirmed = state, true
-			return
-		}
 		if p.ctx.Err() != nil {
 			j.stoppedByRunner = true
 		}
@@ -559,8 +567,9 @@ func (e *Engine) monitor(p *pipeline, j *job) {
 		case <-time.After(e.config.PollInterval):
 		}
 	}
-	j.state = engine.State{Exited: true, ExitCode: 137}
-	j.err = fmt.Errorf("%v; lsf: cannot confirm termination of job %s (last bkill error: %v); retained %s", j.err, j.id, killErr, p.dir)
+	// The runner failed; the scheduler has not confirmed an exit or exit code.
+	j.state = engine.State{}
+	j.err = fmt.Errorf("%v; lsf: cannot confirm termination of job %s (last bkill error: %v); %s; retained %s", j.err, j.id, killErr, recovery, p.dir)
 	logrus.Error(j.err)
 }
 

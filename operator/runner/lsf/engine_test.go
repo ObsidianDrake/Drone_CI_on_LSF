@@ -398,6 +398,19 @@ func TestQueryFailureCancelsAndRetainsWorkspace(t *testing.T) {
 	if strings.TrimSpace(string(data)) != "EXIT 137" {
 		t.Fatalf("bkill did not terminate job: %s", data)
 	}
+	// Recover using only the durable record, as after a server restart.
+	config := e.config
+	config.Bjobs = realBjobs
+	restarted, err := New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.cleanupPendingJobs(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(j.dir, pendingCleanupFile)); !os.IsNotExist(err) {
+		t.Fatalf("cleanup was not confirmed after recovery: %v", err)
+	}
 }
 
 func TestStepOptionsAndShells(t *testing.T) {
