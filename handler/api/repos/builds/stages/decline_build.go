@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/drone/drone/core"
 	"github.com/drone/drone/handler/api/render"
@@ -66,6 +67,7 @@ func HandleDeclineBuild(
 			}
 
 			stage.Status = core.StatusDeclined
+			stage.Stopped = time.Now().Unix()
 			err = stages.Update(r.Context(), stage)
 			if err != nil {
 				render.InternalError(w, err)
@@ -74,6 +76,7 @@ func HandleDeclineBuild(
 		}
 
 		build.Status = core.StatusDeclined
+		build.Finished = time.Now().Unix()
 		err = builds.Update(r.Context(), build)
 		if err != nil {
 			render.InternalError(w, err)

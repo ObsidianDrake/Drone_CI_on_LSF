@@ -11,9 +11,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/drone/drone/core"
 	"github.com/drone/drone/handler/api/errors"
 	"github.com/drone/drone/mock"
-	"github.com/drone/drone/core"
 
 	"github.com/go-chi/chi"
 	"github.com/golang/mock/gomock"
@@ -259,5 +259,56 @@ func TestDecline_InvalidStatus(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(got)
 	if diff := cmp.Diff(got, want); len(diff) != 0 {
 		t.Errorf("Diff: %s", diff)
+	}
+}
+
+func TestDecline_RecordsCompletion(t *testing.T) {
+	controller := gomock.NewController(t)
+	defer controller.Finish()
+
+	mockRepo := &core.Repository{
+		Namespace: "octocat",
+		Name:      "hello-world",
+	}
+	mockBuild := &core.Build{
+		ID:     111,
+		Number: 1,
+		Status: core.StatusBlocked,
+	}
+	mockStage := &core.Stage{
+		ID:     222,
+		Number: 2,
+		Status: core.StatusBlocked,
+	}
+
+	repos := mock.NewMockRepositoryStore(controller)
+	repos.EXPECT().FindName(gomock.Any(), mockRepo.Namespace, mockRepo.Name).Return(mockRepo, nil)
+
+	builds := mock.NewMockBuildStore(controller)
+	builds.EXPECT().FindNumber(gomock.Any(), mockRepo.ID, int64(1)).Return(mockBuild, nil)
+
+	stages := mock.NewMockStageStore(controller)
+	stages.EXPECT().FindNumber(gomock.Any(), mockBuild.ID, 2).Return(mockStage, nil)
+
+	c := new(chi.Context)
+	c.URLParams.Add("owner", "octocat")
+	c.URLParams.Add("name", "hello-world")
+	c.URLParams.Add("number", "1")
+	c.URLParams.Add("stage", "2")
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/", nil)
+	r = r.WithContext(
+		context.WithValue(context.Background(), chi.RouteCtxKey, c),
+	)
+
+	builds.EXPECT().Update(gomock.Any(), mockBuild).Return(nil)
+	stages.EXPECT().Update(gomock.Any(), mockStage).Return(nil)
+	HandleDecline(repos, builds, stages)(w, r)
+	if w.Code != 204 || mockBuild.Finished == 0 || mockBuild.Status != core.StatusDeclined {
+		t.Fatalf("response=%d build=%+v", w.Code, mockBuild)
+	}
+	if mockStage.Stopped == 0 || mockStage.Status != core.StatusDeclined {
+		t.Fatalf("stage=%+v", mockStage)
 	}
 }

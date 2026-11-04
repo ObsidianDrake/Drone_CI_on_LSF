@@ -219,3 +219,32 @@ func TestHistoryNonSuccessAllPages(t *testing.T) {
 		}
 	}
 }
+
+func TestDeleteDeclinedHistory(t *testing.T) {
+	conn, err := dbtest.Connect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	store := New(conn).(*buildStore)
+	for i, status := range []string{core.StatusDeclined, core.StatusBlocked} {
+		b := &core.Build{RepoID: 1, Number: int64(i + 1), Status: status}
+		if err := store.Create(noContext, b, []*core.Stage{{RepoID: 1, Number: 1, Status: status}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	filter := core.HistoryFilter{Numbers: []int64{1, 2}}
+	preview, err := store.DeleteHistory(noContext, 1, filter, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(preview.Numbers, []int64{1}) {
+		t.Fatalf("preview: %v", preview.Numbers)
+	}
+	if _, err = store.DeleteHistory(noContext, 1, filter, preview.Token); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.FindNumber(noContext, 1, 2); err != nil {
+		t.Fatal("blocked record removed", err)
+	}
+}

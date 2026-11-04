@@ -18,7 +18,7 @@ function qu(props) {
   var dialogRef = n.useRef(null);
   var admin = !!(props.user && props.user.admin), limit = 25;
   A(namespace + '/' + name);
-  function terminal(build) { return ['success','failure','error','killed','skipped'].indexOf(build.status) >= 0; }
+  function terminal(build) { return ['success','failure','error','killed','skipped','declined'].indexOf(build.status) >= 0; }
   n.useEffect(function () {
     setPage(1); setSelected([]); setData([]); setMessage(''); setDialog(null);
   }, [api]);

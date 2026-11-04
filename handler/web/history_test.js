@@ -13,12 +13,12 @@ const history={replace:()=>{}}, Gu=x=>x, A=()=>{}, Zu='summary', Mu='build-list'
 const window={confirm:message=>{notices.push(message);return confirmation}};
 const realTimeout=setTimeout;
 global.setInterval=()=>1;global.clearInterval=()=>{};
-const first=Array.from({length:25},(_,i)=>({number:50-i,status:i===0?'running':i===1?'success':i===2?'blocked':'failure'}));
+const first=Array.from({length:25},(_,i)=>({number:50-i,status:i===0?'running':i===1?'success':i===2?'blocked':i===3?'declined':'failure'}));
 function at(url,options){
  calls.push({url,options});
  if(!options)return Promise.resolve(url.includes('?page=2&')?[{number:1,status:'error'}]:first);
  if(options.data.commit){if(conflict)return Promise.reject(new Error('Build history changed. Preview and confirm the selection again.'));return Promise.resolve({numbers:options.data.numbers||[1]});}
- let rows=options.data.numbers?first.concat([{number:1,status:'error'}]).filter(x=>options.data.numbers.includes(x.number)&&['success','failure','error','killed','skipped'].includes(x.status)&&(!options.data.non_success||x.status!=='success')).map(x=>x.number):options.data.non_success?first.concat([{number:1,status:"error"}]).filter(x=>["failure","error","killed","skipped"].includes(x.status)).map(x=>x.number):[1];
+ let rows=options.data.numbers?first.concat([{number:1,status:'error'}]).filter(x=>options.data.numbers.includes(x.number)&&['success','failure','error','killed','skipped','declined'].includes(x.status)&&(!options.data.non_success||x.status!=='success')).map(x=>x.number):options.data.non_success?first.concat([{number:1,status:"error"}]).filter(x=>["failure","error","killed","skipped","declined"].includes(x.status)).map(x=>x.number):[1];
  return Promise.resolve({numbers:rows,token:'preview'});
 }
 let tree,admin=true;
@@ -30,7 +30,7 @@ function button(label){let item=nodes(tree).find(x=>x.type==='button'&&text(x)==
 async function flush(){await new Promise(resolve=>realTimeout(resolve,0));render();await new Promise(resolve=>realTimeout(resolve,0));render();}
 (async()=>{
  render();await flush();
- assert(rowDelete(50).props.disabled);assert(rowDelete(48).props.disabled);assert(!rowDelete(49).props.disabled);
+ assert(rowDelete(50).props.disabled);assert(rowDelete(48).props.disabled);assert(!rowDelete(49).props.disabled);assert(!rowDelete(47).props.disabled);
  assert(!nodes(tree).some(x=>x.type==='button'&&text(x).startsWith('Delete selected')));
  let select=nodes(tree).find(x=>x.type==='input'&&x.props.type==='checkbox');select.props.onChange({target:{checked:true}});render();assert(!button('Delete selected (23)').props.disabled);
  button('Next').props.onClick();render();await flush();assert(text(tree).includes('Page 2'));assert(!nodes(tree).some(x=>text(x).startsWith('Delete selected (')));

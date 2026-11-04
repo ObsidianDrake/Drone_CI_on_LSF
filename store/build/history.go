@@ -14,7 +14,7 @@ func (s *buildStore) DeleteHistory(ctx context.Context, repo int64, filter core.
 	out := &core.HistoryPreview{Numbers: []int64{}}
 	err := s.db.Update(func(tx db.Execer, binder db.Binder) error {
 		params := map[string]interface{}{"repo": repo, "before": filter.Before}
-		condition := "build_repo_id = :repo AND build_status IN ('success','failure','error','killed','skipped')"
+		condition := "build_repo_id = :repo AND build_status IN ('success','failure','error','killed','skipped','declined')"
 		if filter.Before > 0 {
 			condition += " AND build_number < :before"
 		} else if len(filter.Numbers) > 0 {

@@ -190,3 +190,65 @@ func TestDeclineBuild_InvalidStatus(t *testing.T) {
 		t.Errorf("Diff: %s", diff)
 	}
 }
+
+func TestDeclineBuild_RecordsCompletion(t *testing.T) {
+	controller := gomock.NewController(t)
+	defer controller.Finish()
+
+	mockRepo := &core.Repository{
+		Namespace: "octocat",
+		Name:      "hello-world",
+	}
+	mockBuild := &core.Build{
+		ID:     111,
+		Number: 1,
+		Status: core.StatusBlocked,
+	}
+	mockStage1 := &core.Stage{
+		ID:     222,
+		Number: 2,
+		Status: core.StatusBlocked,
+	}
+
+	mockStage2 := &core.Stage{
+		ID:     333,
+		Number: 3,
+		Status: core.StatusBlocked,
+	}
+
+	mockStageList := []*core.Stage{mockStage1, mockStage2}
+
+	repos := mock.NewMockRepositoryStore(controller)
+	repos.EXPECT().FindName(gomock.Any(), mockRepo.Namespace, mockRepo.Name).Return(mockRepo, nil)
+
+	builds := mock.NewMockBuildStore(controller)
+	builds.EXPECT().FindNumber(gomock.Any(), mockRepo.ID, int64(1)).Return(mockBuild, nil)
+
+	stages := mock.NewMockStageStore(controller)
+	stages.EXPECT().List(gomock.Any(), mockBuild.ID).Return(mockStageList, nil)
+
+	c := new(chi.Context)
+	c.URLParams.Add("owner", "octocat")
+	c.URLParams.Add("name", "hello-world")
+	c.URLParams.Add("number", "1")
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/", nil)
+	r = r.WithContext(
+		context.WithValue(context.Background(), chi.RouteCtxKey, c),
+	)
+
+	builds.EXPECT().Update(gomock.Any(), mockBuild).Return(nil)
+	stages.EXPECT().Update(gomock.Any(), mockStage1).Return(nil)
+	stages.EXPECT().Update(gomock.Any(), mockStage2).Return(nil)
+	HandleDeclineBuild(repos, builds, stages)(w, r)
+	if w.Code != 204 || mockBuild.Finished == 0 || mockBuild.Status != core.StatusDeclined {
+		t.Fatalf("response=%d build=%+v", w.Code, mockBuild)
+	}
+	if mockStage1.Stopped == 0 || mockStage1.Status != core.StatusDeclined {
+		t.Fatalf("stage=%+v", mockStage1)
+	}
+	if mockStage2.Stopped == 0 || mockStage2.Status != core.StatusDeclined {
+		t.Fatalf("stage=%+v", mockStage2)
+	}
+}

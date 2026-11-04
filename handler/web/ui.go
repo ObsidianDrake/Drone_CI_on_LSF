@@ -59,6 +59,9 @@ func newUIAssets(base string) (*uiAssets, error) {
 
 func adaptMain(data []byte, base string) ([]byte, error) {
 	features := []struct{ old, replacement string }{
+		{`case"skipped":return t?"Skipped due to error":"Skipped";default:return"Loading..."`, `case"declined":return"Pipeline was declined; no commands were started.";case"blocked":return"Waiting for approval.";case"skipped":return t?"Skipped due to error":"Skipped";default:return"Loading..."`},
+		{`r=e.currentCompState;if("error"===t)return N;switch(a){`, `r=e.currentCompState;if("declined"===t)return y;if("error"===t)return N;switch(a){`},
+
 		{`{data:_,userIsAdminOrHasWritePerm:r,view:M}`, `{data:_,userIsAdminOrHasWritePerm:r,userIsAdmin:!!(a&&a.admin),view:M}`},
 		{`{to:"/".concat(a,"/").concat(n,"/deployments"),exact:!0,label:"Deployments",tag:t?"span":l.c},`, ``},
 		{`Object(He.jsx)(dh.Deployments,{path:"/:namespace/:name/deployments",componentProps:{user:t,repo:x},visibility:S,exact:!0}),`, ``},
