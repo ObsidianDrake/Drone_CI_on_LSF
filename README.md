@@ -267,3 +267,11 @@ UI 基於固定版本的預編譯 `drone-ui` 資產，由 Go 端套用適配；�
 ## 授權
 
 保留上游的 [LICENSE](LICENSE) 與 [NOTICE](NOTICE)。不同 edition 與來源檔案適用的授權請依這些文件及檔頭確認；Community Edition 的建置方式見 [BUILDING_OSS](BUILDING_OSS)。目前 `make` 不額外加入 `oss nolimit` build tags。
+
+### Build mail notices
+
+Repository Settings → Project Settings includes an optional **Mail notice** switch
+and **To**, **CC** fields. By default, enabled notices go only to the
+commit author. SMTP is configured on the server using `DRONE_SMTP_HOST`,
+`DRONE_SMTP_PORT`, and `DRONE_SMTP_FROM`. See [mail notice setup](docs/mail-notice.md)
+for configuration, delivery behavior, and limitations.

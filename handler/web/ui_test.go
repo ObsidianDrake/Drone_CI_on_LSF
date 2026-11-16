@@ -234,3 +234,33 @@ func TestNextBuildNumberSaveRequest(t *testing.T) {
 		t.Fatalf("%v: %s", err, out)
 	}
 }
+
+func TestMailNoticeSettingsUI(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node required")
+	}
+	u, err := newUIAssets("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cached, _ := u.cache.Load(u.main)
+	data := cached.([]byte)
+	change := regexp.MustCompile(`,y=(function\(e\)\{return function\(t\)\{switch\(e\).*?\}\}\});return null===v`).FindSubmatch(data)
+	if len(change) != 2 {
+		t.Fatal("settings event handler missing")
+	}
+	script := `let v={mail_notice:false,mail_to:'',mail_cc:''};
+ const O=update=>{v=typeof update==='function'?update(v):update},i={a:Object.assign},z={a:(obj,key,value)=>Object.assign(obj,{[key]:value})};
+ const y=` + string(change[1]) + `;y('mail_notice')();if(!v.mail_notice)throw Error('toggle failed');`
+	for _, field := range []string{"mail_to", "mail_cc"} {
+		expression := regexp.MustCompile(`onChange:(function\(e\)\{O\(Object.assign\(\{\},v,\{` + field + `:e.target.value\}\)\)\})`).FindSubmatch(data)
+		if len(expression) != 2 {
+			t.Fatalf("missing %s input", field)
+		}
+		script += `(` + string(expression[1]) + `)({target:{value:'team@example.com'}});if(v.` + field + `!=='team@example.com'||!v.mail_notice)throw Error('input update lost settings');`
+	}
+	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+}

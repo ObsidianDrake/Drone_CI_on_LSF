@@ -23,6 +23,7 @@ import (
 	"github.com/drone/drone/handler/api/render"
 	"github.com/drone/drone/handler/api/request"
 	"github.com/drone/drone/logger"
+	"github.com/drone/drone/service/mailnotice"
 	"github.com/drone/drone/store/shared/db"
 
 	"github.com/go-chi/chi"
@@ -38,6 +39,9 @@ type (
 		Config             *string         `json:"config_path"`
 		Trusted            *bool           `json:"trusted"`
 		LSFJobInfoDisabled *bool           `json:"lsf_job_info_disabled"`
+		MailNotice         *bool           `json:"mail_notice"`
+		MailTo             *string         `json:"mail_to"`
+		MailCC             *string         `json:"mail_cc"`
 		Protected          *bool           `json:"protected"`
 		IgnoreForks        *bool           `json:"ignore_forks"`
 		IgnorePulls        *bool           `json:"ignore_pull_requests"`
@@ -136,6 +140,23 @@ func HandleUpdate(repos core.RepositoryStore) http.HandlerFunc {
 			repo.LSFJobInfoDisabled = *in.LSFJobInfoDisabled
 		}
 
+		if in.MailNotice != nil {
+			repo.MailNotice = *in.MailNotice
+		}
+		if in.MailTo != nil {
+			if err := mailnotice.Validate(*in.MailTo, false); err != nil {
+				render.BadRequestf(w, "Invalid mail_to: %s", err)
+				return
+			}
+			repo.MailTo = *in.MailTo
+		}
+		if in.MailCC != nil {
+			if err := mailnotice.Validate(*in.MailCC, false); err != nil {
+				render.BadRequestf(w, "Invalid mail_cc: %s", err)
+				return
+			}
+			repo.MailCC = *in.MailCC
+		}
 		if in.Visibility != nil {
 			repo.Visibility = *in.Visibility
 		}

@@ -66,7 +66,7 @@ func InitializeApplication(config2 config.Config) (application, error) {
 	statusService := provideStatusService(client, renewer, config2)
 	stepStore := step.New(db)
 	system := provideSystem(config2)
-	webhookSender := provideWebhookPlugin(config2, system)
+	webhookSender := provideWebhookPlugin(config2, system, db)
 	coreCanceler := canceler.New(buildStore, corePubsub, repositoryStore, scheduler, stageStore, statusService, stepStore, userStore, webhookSender)
 	fileService := provideContentService(client, renewer)
 	configService := provideConfigPlugin(client, fileService, config2)

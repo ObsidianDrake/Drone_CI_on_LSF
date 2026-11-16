@@ -58,6 +58,9 @@ type (
 		Config             string `json:"config_path"`
 		Trusted            bool   `json:"trusted"`
 		LSFJobInfoDisabled bool   `json:"lsf_job_info_disabled"`
+		MailNotice         bool   `json:"mail_notice"`
+		MailTo             string `json:"mail_to"`
+		MailCC             string `json:"mail_cc"`
 		Protected          bool   `json:"protected"`
 		IgnoreForks        bool   `json:"ignore_forks"`
 		IgnorePulls        bool   `json:"ignore_pull_requests"`

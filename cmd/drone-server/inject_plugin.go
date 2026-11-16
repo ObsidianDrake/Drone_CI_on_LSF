@@ -24,6 +24,8 @@ import (
 	"github.com/drone/drone/plugin/secret"
 	"github.com/drone/drone/plugin/validator"
 	"github.com/drone/drone/plugin/webhook"
+	"github.com/drone/drone/service/mailnotice"
+	"github.com/drone/drone/store/shared/db"
 	"github.com/drone/go-scm/scm"
 
 	"github.com/google/wire"
@@ -161,11 +163,11 @@ func provideValidatePlugin(conf spec.Config) core.ValidateService {
 
 // provideWebhookPlugin is a Wire provider function that returns
 // a webhook plugin based on the environment configuration.
-func provideWebhookPlugin(config spec.Config, system *core.System) core.WebhookSender {
-	return webhook.New(webhook.Config{
+func provideWebhookPlugin(config spec.Config, system *core.System, database *db.DB) core.WebhookSender {
+	return mailnotice.New(webhook.New(webhook.Config{
 		Events:   config.Webhook.Events,
 		Endpoint: config.Webhook.Endpoint,
 		Secret:   config.Webhook.Secret,
 		System:   system,
-	})
+	}), database, mailnotice.Config{Host: config.SMTP.Host, Port: config.SMTP.Port, From: config.SMTP.From, BaseURL: system.Link})
 }

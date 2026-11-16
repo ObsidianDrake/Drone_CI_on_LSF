@@ -227,6 +227,9 @@ func testRepoUpdate(repos *repoStore) func(t *testing.T) {
 		version := before.Version
 		before.Private = true
 		before.LSFJobInfoDisabled = true
+		before.MailNotice = true
+		before.MailTo = "team@example.com"
+		before.MailCC = "cc@example.com"
 		err = repos.Update(noContext, before)
 		if err != nil {
 			t.Error(err)
@@ -239,6 +242,9 @@ func testRepoUpdate(repos *repoStore) func(t *testing.T) {
 		}
 		if got, want := after.Version, version+1; got != want {
 			t.Errorf("Want version incremented on update")
+		}
+		if !after.MailNotice || after.MailTo != before.MailTo || after.MailCC != before.MailCC {
+			t.Fatal("mail settings not persisted")
 		}
 		if !after.LSFJobInfoDisabled {
 			t.Fatal("LSF setting not persisted")

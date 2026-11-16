@@ -221,6 +221,10 @@ var migrations = []struct {
  job_name VARCHAR(250) NOT NULL
 );`},
 	{name: "create-trend-repo-index", stmt: `CREATE INDEX trend_repo_time ON trend_samples(trend_repo,trend_time);`},
+	{name: "alter-table-repos-add-mail-notice", stmt: `ALTER TABLE repos ADD COLUMN repo_mail_notice BOOLEAN NOT NULL DEFAULT FALSE;`},
+	{name: "alter-table-repos-add-mail-to", stmt: `ALTER TABLE repos ADD COLUMN repo_mail_to VARCHAR(2048) NOT NULL DEFAULT '';`},
+	{name: "alter-table-repos-add-mail-cc", stmt: `ALTER TABLE repos ADD COLUMN repo_mail_cc VARCHAR(2048) NOT NULL DEFAULT '';`},
+	{name: "create-table-mail-notices", stmt: `CREATE TABLE mail_notices (build_id BIGINT PRIMARY KEY);`},
 }
 
 // Migrate performs the database migration. If the migration fails

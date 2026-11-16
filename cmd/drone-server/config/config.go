@@ -47,6 +47,11 @@ func init() {
 type (
 	// Config provides the system configuration.
 	Config struct {
+		SMTP struct {
+			Host string `envconfig:"DRONE_SMTP_HOST"`
+			Port string `envconfig:"DRONE_SMTP_PORT" default:"25"`
+			From string `envconfig:"DRONE_SMTP_FROM"`
+		}
 		License string `envconfig:"DRONE_LICENSE"`
 
 		Authn        Authentication
