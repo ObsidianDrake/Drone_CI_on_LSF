@@ -694,19 +694,28 @@ func (e *Engine) Destroy(ctx context.Context, spec *engine.Spec) error {
 	return os.RemoveAll(p.dir)
 }
 
-// Only known informational Git messages are white. Unknown diagnostics, warnings
-// and errors remain red; user commands retain normal stderr coloring.
-func stderrReader(nativeClone bool) string {
-	var script strings.Builder
-	script.WriteString("while IFS= read -r line || [ -n \"$line\" ]; do\n")
-	if nativeClone {
-		script.WriteString(`case "$line" in
-  hint:*|"From "*|" * branch "*|" * [new branch] "*|" * [new tag] "*|"HEAD is now at "*|"remote: Enumerating objects:"*|"remote: Counting objects:"*|"remote: Compressing objects:"*|"remote: Total "*|"Receiving objects:"*|"Resolving deltas:"*|"Updating files:"*)
-    printf '\033[0;37m%s\033[0;37m\n' "$line"
-    continue ;;
-esac
-`)
-	}
-	script.WriteString("printf '\\033[31m%s\\033[0;37m\\n' \"$line\"\ndone")
-	return script.String()
+// Classify only explicit, leading log levels, optionally after a numeric elapsed
+// time (PyInstaller). stderr itself is not an error severity. Use POSIX shell
+// patterns so this also works on the RHEL 6 execution nodes without new tools.
+func stderrReader(_ bool) string {
+	return `esc=$(printf '\033')
+while IFS= read -r line || [ -n "$line" ]; do
+  # Preserve tool-provided ANSI sequences without adding our own colors.
+  case "$line" in *"$esc"*) printf '%s\n' "$line"; continue ;; esac
+  level="$line"
+  level="${level#"${level%%[![:space:]]*}"}"
+  number="${level%%[!0-9]*}"
+  if [ -n "$number" ]; then
+    rest="${level#"$number"}"
+    case "$rest" in
+      [[:space:]]*) level="${rest#"${rest%%[![:space:]]*}"}" ;;
+    esac
+  fi
+  color='0;37'
+  case "$level" in
+    [Ww][Aa][Rr][Nn]:*|[Ww][Aa][Rr][Nn][Ii][Nn][Gg]:*|\[[Ww][Aa][Rr][Nn]\]*|\[[Ww][Aa][Rr][Nn][Ii][Nn][Gg]\]*) color='33' ;;
+    [Ee][Rr][Rr][Oo][Rr]:*|[Cc][Rr][Ii][Tt][Ii][Cc][Aa][Ll]:*|[Ff][Aa][Tt][Aa][Ll]:*|\[[Ee][Rr][Rr][Oo][Rr]\]*|\[[Cc][Rr][Ii][Tt][Ii][Cc][Aa][Ll]\]*|\[[Ff][Aa][Tt][Aa][Ll]\]*) color='31' ;;
+  esac
+  printf '\033[%sm%s\033[0;37m\n' "$color" "$line"
+done`
 }

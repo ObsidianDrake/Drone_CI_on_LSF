@@ -287,9 +287,9 @@ Go 整合測試需要 tcsh，涵蓋公司 YAML 派送、webhook commit clone、�
 
 每個 YAML commands 項目執行前，stdout 先以 ANSI 綠色顯示 `+ command`，再切為白色顯示執行結果；clone 命令亦同。命令顯示原始文字，不額外展開 shell 變數。多行 command 會整段顯示後執行，以保留 heredoc 與控制流程。執行程式自行輸出的 ANSI 色碼仍可改變顏色。執行節點須提供 `/usr/bin/printf`。
 
-stderr 透過獨立 pipe 逐行以 ANSI 紅色串流到相同的 step log，行尾切回白色；stdout 保留原有輸出。無換行的 stderr 片段會在換行或關閉串流時顯示。執行節點須提供 `/usr/bin/mkfifo`。stdout 與 stderr 由不同串流處理，同時輸出時不保證跨串流的精確順序；程式若自行將 stderr 重導至 stdout，就無法再區分。LSF 的 `scheduler.out`／`scheduler.err` 不包含在此著色範圍。
+stderr 透過獨立 pipe 逐行串流到相同的 step log。只有行首明確的 log level（`LEVEL:` 或 `[LEVEL]`，也可在前方有數字與空白，例如 PyInstaller 的 `123 WARNING:`）才會分類，大小寫不敏感：WARN／WARNING 為黃色，ERROR／CRITICAL／FATAL 為紅色，其餘包含 INFO／DEBUG 與一般 Perl `diag` 都為白色。自動著色的行尾切回白色；含有 ANSI escape 的行與 stdout 保留原有輸出。無換行的 stderr 片段會在換行或關閉串流時顯示。執行節點須提供 `/usr/bin/mkfifo`。stdout 與 stderr 由不同串流處理，同時輸出時不保證跨串流的精確順序；程式若自行將 stderr 重導至 stdout，就無法再區分。LSF 的 `scheduler.out`／`scheduler.err` 不包含在此著色範圍。
 
-原生 clone 的 Git 已知一般提示（`hint:`、`From ...`、fetch branch 狀態、`HEAD is now at ...` 與常見進度）會轉為白色 stdout 日誌。`fatal:`、`error:`、warning 與未辨識的 stderr 訊息保留紅色；其他 step 的 stderr 規則不變。這是依訊息格式分類，不影響 Git 的退出碼判定。
+原生 clone 與其他 step 使用相同規則：Git 的一般提示與未辨識訊息為白色，`warning:` 為黃色，`fatal:`／`error:` 為紅色。正文中的 error 字樣不會觸發著色。這只影響顯示，不影響退出碼與 step 成敗判定。
 
 每個已確認結束的 LSF job（含成功、失敗與已確認取消）會在 step log 結尾直接附加該 step 的 `scheduler.out` 原始內容，保留原有欄位、縮排與換行，不再查詢或解析 `bjobs -a -l`。內容置於 `LSF job information (scheduler.out)` 區塊；不包含 `scheduler.err`。Job 確認結束後，runner 會重新開啟並讀取 `scheduler.out`，等待非空內容連續 2 秒保持不變，這段報告收集最多等待 15 秒（沿用 `output.log` 的穩定期間與等待上限設定）。空檔或尚未建立的檔案會持續重試至期限；內容變更（包含大小相同的改寫）會重新計算穩定期間，但不延長總期限。期限到達仍不存在時顯示 `scheduler.out is unavailable.`，仍為空檔時顯示 `scheduler.out is empty.`；其他讀取錯誤立即顯示 unavailable 並記錄 server log。有內容但尚未穩定時，附上最後讀到的內容及英文不完整報告警告。以上不改變 step 退出碼。報告附加完成後，既有 `output.log` 收尾補讀才結束，因此 15 秒是報告收集本身的上限，並非整個 step 的總收尾上限。未提交、跳過或尚無法確認終止的 job 不會附加此區塊。一般 build 仍在讀取後清理工作目錄，Debug build 則保留檔案。
 

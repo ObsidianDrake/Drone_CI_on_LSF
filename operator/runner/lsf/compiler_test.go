@@ -57,14 +57,58 @@ func TestCloneStatusColors(t *testing.T) {
 		}
 		var want strings.Builder
 		for i, line := range lines {
-			color := "\x1b[31m"
-			if nativeClone && i < 4 {
-				color = "\x1b[0;37m"
+			color := "\x1b[0;37m"
+			if i == 4 || i == 5 {
+				color = "\x1b[31m"
+			}
+			if i == 6 {
+				color = "\x1b[33m"
 			}
 			want.WriteString(color + line + "\x1b[0;37m\n")
 		}
 		if string(output) != want.String() {
 			t.Fatalf("clone=%v output=%q", nativeClone, output)
 		}
+	}
+}
+
+func TestStderrLogLevels(t *testing.T) {
+	cases := []struct{ line, color string }{
+		{"123 INFO: Building executable", "0;37"},
+		{"debug: details", "0;37"},
+		{"[Info] error count is 0", "0;37"},
+		{"WARNING: missing optional module", "33"},
+		{"wArN: diagnostic", "33"},
+		{"[Warning] diagnostic", "33"},
+		{"  123 warning: diagnostic", "33"},
+		{"ERROR: failed", "31"},
+		{"[eRrOr] failed", "31"},
+		{"critical: failed", "31"},
+		{"[CRITICAL] failed", "31"},
+		{"Fatal: failed", "31"},
+		{"123 FATAL: failed", "31"},
+		{"# Perl diag: there was no error", "0;37"},
+		{"There was no error", "0;37"},
+		{"error_count: 0", "0;37"},
+		{"123ERROR: not a level prefix", "0;37"},
+		{"", "0;37"},
+		{"中文 100% 'quoted' \\path", "0;37"},
+		{"\x1b[36mERROR: custom cyan\x1b[0m", ""},
+	}
+	var input, want strings.Builder
+	for _, c := range cases {
+		input.WriteString(c.line + "\n")
+		if c.color == "" {
+			want.WriteString(c.line + "\n")
+		} else {
+			want.WriteString("\x1b[" + c.color + "m" + c.line + "\x1b[0;37m\n")
+		}
+	}
+	cmd := exec.Command("/bin/sh", "-c", stderrReader(false))
+	// Exercise final unterminated ANSI output as well as multiline diagnostics.
+	cmd.Stdin = strings.NewReader(strings.TrimSuffix(input.String(), "\n"))
+	out, err := cmd.CombinedOutput()
+	if err != nil || string(out) != want.String() {
+		t.Fatalf("err=%v\ngot %q\nwant %q", err, out, want.String())
 	}
 }

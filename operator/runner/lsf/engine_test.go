@@ -95,7 +95,7 @@ steps:
 	if len(codes) != 2 || codes[0] != 0 || codes[1] != 7 {
 		t.Fatalf("step exit codes: %v", codes)
 	}
-	for _, want := range []string{"********", "\x1b[31mstderr-message\x1b[0;37m", "job=", "--- LSF job information (scheduler.out) ---", "scheduler.out is empty."} {
+	for _, want := range []string{"********", "\x1b[0;37mstderr-message\x1b[0;37m", "job=", "--- LSF job information (scheduler.out) ---", "scheduler.out is empty."} {
 		if !strings.Contains(logs.String(), want) {
 			t.Fatalf("logs %q missing %q", logs.String(), want)
 		}
@@ -314,7 +314,7 @@ steps:
 	defer r.Close()
 	buf := make([]byte, 1024)
 	var received strings.Builder
-	for !strings.Contains(received.String(), "\x1b[31mlive-error\x1b[0;37m") {
+	for !strings.Contains(received.String(), "\x1b[0;37mlive-error\x1b[0;37m") {
 		n, err := r.Read(buf)
 		received.Write(buf[:n])
 		if err != nil {
