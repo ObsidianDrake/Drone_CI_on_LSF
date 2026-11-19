@@ -2,6 +2,7 @@
 package lsf
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -372,12 +373,17 @@ func (e *Engine) Create(ctx context.Context, spec *engine.Spec, step *engine.Ste
 
 func quote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
 
-func (e *Engine) command(ctx context.Context, name string, args ...string) ([]byte, error) {
+func (e *Engine) newCommand(ctx context.Context, name string, args ...string) (*exec.Cmd, context.CancelFunc) {
 	ctx, cancel := context.WithTimeout(ctx, e.config.CommandTimeout)
-	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.WaitDelay = time.Second
 	cmd.Env = append(os.Environ(), "LC_ALL=C", "LANG=C")
+	return cmd, cancel
+}
+
+func (e *Engine) command(ctx context.Context, name string, args ...string) ([]byte, error) {
+	cmd, cancel := e.newCommand(ctx, name, args...)
+	defer cancel()
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return output, fmt.Errorf("lsf: %s: %w: %s", filepath.Base(name), err, strings.TrimSpace(string(output)))
@@ -461,23 +467,46 @@ func (e *Engine) Start(ctx context.Context, spec *engine.Spec, step *engine.Step
 }
 
 func (e *Engine) status(ctx context.Context, id string) (engine.State, bool, error) {
-	output, err := e.command(ctx, e.config.Bjobs, "-a", "-noheader", "-o", "stat exit_code", id)
+	cmd, cancel := e.newCommand(ctx, e.config.Bjobs, "-a", "-noheader", "-o", "stat exit_code", id)
+	defer cancel()
+	var diagnostics bytes.Buffer
+	cmd.Stderr = &diagnostics
+	output, err := cmd.Output()
 	if err != nil {
-		return engine.State{}, false, err
+		return engine.State{}, false, fmt.Errorf("lsf: bjobs for %s: %w: %s", id, err, strings.TrimSpace(string(output)+" "+diagnostics.String()))
 	}
-	fields := strings.Fields(string(output))
-	if len(fields) < 1 {
-		return engine.State{}, false, fmt.Errorf("lsf: empty bjobs response for %s", id)
+	// Some LSF clients write their reconnect notice to stdout without a newline.
+	// Strip only this known prefix. Never infer a status from words in a warning.
+	const retryNotice = "Cannot connect to LSF. Please wait ..."
+	row := strings.TrimSpace(string(output))
+	retried := false
+	for strings.HasPrefix(row, retryNotice) {
+		row = strings.TrimSpace(strings.TrimPrefix(row, retryNotice))
+		retried = true
+	}
+	if warning := strings.TrimSpace(diagnostics.String()); warning != "" || retried {
+		logrus.WithField("job", id).WithField("stderr", warning).WithField("retry_notice", retried).Warn("lsf: bjobs reported a diagnostic")
+	}
+	fields := strings.Fields(row)
+	if len(fields) == 0 {
+		return engine.State{}, false, fmt.Errorf("lsf: empty bjobs status for %s: %s", id, strings.TrimSpace(string(output)+" "+diagnostics.String()))
+	}
+	if strings.ContainsAny(row, "\r\n") || len(fields) > 2 {
+		return engine.State{}, false, fmt.Errorf("lsf: unexpected bjobs response for %s: %s", id, row)
+	}
+	code := 0
+	if len(fields) == 2 && fields[1] != "-" {
+		code, err = strconv.Atoi(fields[1])
+		if err != nil || code < 0 {
+			return engine.State{}, false, fmt.Errorf("lsf: invalid bjobs exit code for %s: %s", id, row)
+		}
 	}
 	switch fields[0] {
 	case "DONE":
 		return engine.State{Exited: true}, true, nil
 	case "EXIT":
-		code := 1
-		if len(fields) > 1 {
-			if n, err := strconv.Atoi(fields[1]); err == nil && n > 0 {
-				code = n
-			}
+		if code == 0 {
+			code = 1
 		}
 		return engine.State{Exited: true, ExitCode: code}, true, nil
 	case "PEND", "RUN", "WAIT", "PSUSP", "USUSP", "SSUSP", "PROV":
